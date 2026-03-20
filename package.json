@@ -8,6 +8,7 @@
     "clean": "if exist dist rmdir /s /q dist",
     "start": "func start",
     "start:dev": "npm run build && func start",
+    "smoke:test": "node scripts/smoke-test.mjs",
     "test": "echo \"No tests configured\""
   },
   "keywords": [],

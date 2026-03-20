@@ -34,6 +34,7 @@ param serviceNowDefaultCategory string = ''
 
 var resourceToken = toLower(uniqueString(subscription().id, environmentName, location))
 var tags = { 'azd-env-name': environmentName }
+var keyVaultName = 'kv-${resourceToken}'
 
 // ---------------------------------------------------------------------------
 // Log Analytics Workspace
@@ -61,6 +62,36 @@ resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
   properties: {
     Application_Type: 'web'
     WorkspaceResourceId: logWorkspace.id
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Key Vault
+// ---------------------------------------------------------------------------
+
+resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
+  name: keyVaultName
+  location: location
+  tags: tags
+  properties: {
+    tenantId: tenant().tenantId
+    sku: {
+      family: 'A'
+      name: 'standard'
+    }
+    enableRbacAuthorization: true
+    enabledForDeployment: false
+    enabledForTemplateDeployment: false
+    enabledForDiskEncryption: false
+    publicNetworkAccess: 'Enabled'
+  }
+}
+
+resource serviceNowClientSecretKeyVaultSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+  parent: keyVault
+  name: 'servicenow-client-secret'
+  properties: {
+    value: serviceNowClientSecret
   }
 }
 
@@ -132,7 +163,10 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
         // ServiceNow configuration
         { name: 'SERVICENOW_INSTANCE_URL', value: serviceNowInstanceUrl }
         { name: 'SERVICENOW_CLIENT_ID', value: serviceNowClientId }
-        { name: 'SERVICENOW_CLIENT_SECRET', value: serviceNowClientSecret }
+        {
+          name: 'SERVICENOW_CLIENT_SECRET'
+          value: '@Microsoft.KeyVault(SecretUri=${serviceNowClientSecretKeyVaultSecret.properties.secretUriWithVersion})'
+        }
         { name: 'SERVICENOW_OAUTH_TOKEN_PATH', value: '/oauth_token.do' }
         { name: 'SERVICENOW_DEFAULT_CATALOG', value: serviceNowDefaultCatalog }
         { name: 'SERVICENOW_DEFAULT_CATEGORY', value: serviceNowDefaultCategory }
@@ -180,6 +214,20 @@ resource functionAppStorageRoleAssignment 'Microsoft.Authorization/roleAssignmen
   }
 }
 
+// Key Vault Secrets User - allows app to resolve Key Vault references in app settings
+resource functionAppKeyVaultRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(keyVault.id, functionApp.id, '4633458b-17de-408a-b874-0445c86b69e6')
+  scope: keyVault
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      '4633458b-17de-408a-b874-0445c86b69e6' // Key Vault Secrets User
+    )
+    principalId: functionApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Outputs (consumed by azd)
 // ---------------------------------------------------------------------------
@@ -189,3 +237,4 @@ output AZURE_TENANT_ID string = tenant().tenantId
 output FUNCTION_APP_NAME string = functionApp.name
 output FUNCTION_APP_HOSTNAME string = functionApp.properties.defaultHostName
 output MCP_ENDPOINT_URL string = 'https://${functionApp.properties.defaultHostName}/mcp'
+output KEY_VAULT_NAME string = keyVault.name
