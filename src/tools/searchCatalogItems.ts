@@ -10,6 +10,7 @@ export function registerSearchCatalogItemsTool(server: McpServer): void {
     [
       "Search the ServiceNow Service Catalog for items matching the user's intent.",
       "Accepts natural language text derived from the conversation and returns a ranked list of matching catalog items.",
+      "When header x-servicenow-access-token is provided, results are returned based on that ServiceNow user's access permissions.",
       "Use this tool first to help the user discover and select available service catalog items.",
       "Results include the item's sys_id (required for subsequent tools), name, short description, category, and catalog."
     ].join(" "),

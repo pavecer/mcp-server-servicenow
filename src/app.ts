@@ -2,6 +2,7 @@ import express, { Request, Response } from "express";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { registerTools } from "./tools/index";
+import { runWithRequestContext } from "./requestContext";
 
 /**
  * Creates and returns the Express application that hosts the MCP server.
@@ -37,7 +38,16 @@ export function createMcpExpressApp(): express.Express {
     try {
       await server.connect(transport);
       // Pass the parsed JSON body so the transport doesn't need to re-read the stream
-      await transport.handleRequest(req, res, req.body);
+      const serviceNowAccessToken = req.header("x-servicenow-access-token") || undefined;
+
+      await runWithRequestContext(
+        {
+          serviceNowAccessToken
+        },
+        async () => {
+          await transport.handleRequest(req, res, req.body);
+        }
+      );
 
       res.on("finish", () => {
         transport.close().catch(console.error);

@@ -22,12 +22,6 @@ param serviceNowClientId string
 @secure()
 param serviceNowClientSecret string
 
-@description('Optional: default catalog sys_id to scope catalog searches.')
-param serviceNowDefaultCatalog string = ''
-
-@description('Optional: default category sys_id to scope catalog searches.')
-param serviceNowDefaultCategory string = ''
-
 // ---------------------------------------------------------------------------
 // Variables
 // ---------------------------------------------------------------------------
@@ -168,8 +162,6 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
           value: '@Microsoft.KeyVault(SecretUri=${serviceNowClientSecretKeyVaultSecret.properties.secretUriWithVersion})'
         }
         { name: 'SERVICENOW_OAUTH_TOKEN_PATH', value: '/oauth_token.do' }
-        { name: 'SERVICENOW_DEFAULT_CATALOG', value: serviceNowDefaultCatalog }
-        { name: 'SERVICENOW_DEFAULT_CATEGORY', value: serviceNowDefaultCategory }
       ]
     }
     functionAppConfig: {

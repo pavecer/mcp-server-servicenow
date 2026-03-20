@@ -6,6 +6,7 @@
   "scripts": {
     "build": "tsc -p .",
     "clean": "if exist dist rmdir /s /q dist",
+    "deploy:azure": "pwsh -File scripts/deploy-azure.ps1",
     "start": "func start",
     "start:dev": "npm run build && func start",
     "smoke:test": "node scripts/smoke-test.mjs",

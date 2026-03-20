@@ -14,6 +14,7 @@ It provides three MCP tools:
 - MCP transport: Streamable HTTP in stateless mode
 - ServiceNow auth: OAuth 2.0 client credentials
 - Secrets: ServiceNow client secret stored in Azure Key Vault and referenced by Function App app settings
+- Caller access model: if `x-servicenow-access-token` header is provided, ServiceNow calls run under that user token and respect that user's catalog permissions
 
 ## Prerequisites
 
@@ -46,7 +47,6 @@ npm run build
 - `SERVICENOW_INSTANCE_URL`
 - `SERVICENOW_CLIENT_ID`
 - `SERVICENOW_CLIENT_SECRET`
-- Optional: `SERVICENOW_DEFAULT_CATALOG`, `SERVICENOW_DEFAULT_CATEGORY`
 
 4. Run locally:
 
@@ -59,6 +59,38 @@ The MCP endpoint will be available at:
 - `http://localhost:7071/mcp`
 
 ## Deploy to Azure
+
+### One-command deployment script (recommended)
+
+Use the deployment script to configure ServiceNow connection settings, deploy to Azure, fetch the function key, and optionally run smoke tests.
+
+Interactive mode:
+
+```powershell
+npm run deploy:azure
+```
+
+Non-interactive mode:
+
+```powershell
+pwsh -File scripts/deploy-azure.ps1 \
+  -EnvironmentName dev \
+  -Location westeurope \
+  -SubscriptionId <subscription-id> \
+  -ServiceNowInstanceUrl https://<instance>.service-now.com \
+  -ServiceNowClientId <client-id> \
+  -ServiceNowClientSecret <client-secret> \
+  -ServiceNowOAuthTokenPath /oauth_token.do
+```
+
+Optional script parameters:
+
+- `-SkipSmokeTest`
+
+The script output includes values for Copilot Studio:
+
+- MCP URL
+- `x-functions-key` header value
 
 1. Authenticate:
 
@@ -79,13 +111,6 @@ azd env new <environment-name>
 azd env set SERVICENOW_INSTANCE_URL "https://<your-instance>.service-now.com"
 azd env set SERVICENOW_CLIENT_ID "<client-id>"
 azd env set SERVICENOW_CLIENT_SECRET "<client-secret>"
-```
-
-Optional:
-
-```bash
-azd env set SERVICENOW_DEFAULT_CATALOG "<catalog-sys-id>"
-azd env set SERVICENOW_DEFAULT_CATEGORY "<category-sys-id>"
 ```
 
 4. Provision and deploy:
@@ -120,6 +145,16 @@ az functionapp function keys list \
 ```
 
 Use one returned key as `x-functions-key` header or `?code=<key>` query parameter.
+
+## Caller Identity and ServiceNow Permissions
+
+To enforce ServiceNow catalog visibility based on the caller, send a ServiceNow user access token in:
+
+- Header: `x-servicenow-access-token: <servicenow-user-access-token>`
+
+When this header is present, MCP tool calls use that token for ServiceNow API calls, so search and ordering follow that ServiceNow user's permissions.
+
+If the header is not present, the server falls back to configured client credentials token.
 
 ## Smoke Test (All 3 Tools)
 

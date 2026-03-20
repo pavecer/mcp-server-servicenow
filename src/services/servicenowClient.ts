@@ -2,6 +2,7 @@ import axios, { AxiosInstance } from "axios";
 import { config } from "../config";
 import { ServiceNowCatalogItem, ServiceNowCatalogItemDetail, ServiceNowOrderResult } from "../types/servicenow";
 import { TokenManager } from "./tokenManager";
+import { getRequestContext } from "../requestContext";
 
 interface SearchOptions {
   catalogSysId?: string;
@@ -19,7 +20,9 @@ export class ServiceNowClient {
   private readonly tokenManager = new TokenManager();
 
   private async getClient(): Promise<AxiosInstance> {
-    const token = await this.tokenManager.getAccessToken();
+    const callerToken = getRequestContext()?.serviceNowAccessToken;
+    const token = callerToken || await this.tokenManager.getAccessToken();
+
     return axios.create({
       baseURL: config.serviceNow.instanceUrl,
       headers: {
@@ -33,13 +36,22 @@ export class ServiceNowClient {
 
   async searchCatalogItems(text: string, options?: SearchOptions): Promise<ServiceNowCatalogItem[]> {
     const client = await this.getClient();
+
+    const params: Record<string, string | number> = {
+      sysparm_text: text,
+      sysparm_limit: options?.limit ?? 20
+    };
+
+    if (options?.catalogSysId) {
+      params.sysparm_catalog = options.catalogSysId;
+    }
+
+    if (options?.categorySysId) {
+      params.sysparm_category = options.categorySysId;
+    }
+
     const response = await client.get<{ result: ServiceNowCatalogItem[] }>("/api/sn_sc/servicecatalog/items", {
-      params: {
-        sysparm_text: text,
-        sysparm_catalog: options?.catalogSysId || config.serviceNow.defaultCatalog,
-        sysparm_category: options?.categorySysId || config.serviceNow.defaultCategory,
-        sysparm_limit: options?.limit ?? 20
-      }
+      params
     });
 
     return response.data.result || [];
