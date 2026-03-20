@@ -1,0 +1,43 @@
+export interface ServiceNowCatalogItem {
+  sys_id: string;
+  name: string;
+  short_description?: string;
+  description?: string;
+  picture?: string;
+  category?: {
+    sys_id?: string;
+    title?: string;
+    name?: string;
+  };
+  sc_catalog?: {
+    sys_id?: string;
+    title?: string;
+    name?: string;
+  };
+}
+
+export interface ServiceNowVariableChoice {
+  label: string;
+  value: string;
+}
+
+export interface ServiceNowVariable {
+  name: string;
+  label: string;
+  type?: string;
+  mandatory?: boolean;
+  default_value?: string;
+  instructions?: string;
+  choices?: ServiceNowVariableChoice[];
+}
+
+export interface ServiceNowCatalogItemDetail extends ServiceNowCatalogItem {
+  variables?: ServiceNowVariable[];
+}
+
+export interface ServiceNowOrderResult {
+  request_number: string;
+  request_id?: string;
+  sys_id?: string;
+  table?: string;
+}

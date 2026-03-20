@@ -1,0 +1,13 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "node",
+    "SERVICENOW_INSTANCE_URL": "https://your-instance.service-now.com",
+    "SERVICENOW_CLIENT_ID": "",
+    "SERVICENOW_CLIENT_SECRET": "",
+    "SERVICENOW_OAUTH_TOKEN_PATH": "/oauth_token.do",
+    "SERVICENOW_DEFAULT_CATALOG": "",
+    "SERVICENOW_DEFAULT_CATEGORY": ""
+  }
+}

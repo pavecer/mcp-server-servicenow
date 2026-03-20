@@ -1,0 +1,29 @@
+{
+  "name": "mcp-server-servicenow",
+  "version": "1.0.0",
+  "description": "ServiceNow MCP server with Azure Functions hosting",
+  "main": "dist/functions/*.js",
+  "scripts": {
+    "build": "tsc -p .",
+    "clean": "if exist dist rmdir /s /q dist",
+    "start": "func start",
+    "start:dev": "npm run build && func start",
+    "test": "echo \"No tests configured\""
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@azure/functions": "^4.11.2",
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "axios": "^1.13.6",
+    "express": "^5.2.1",
+    "serverless-http": "^4.0.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.5.0",
+    "typescript": "^5.9.3"
+  }
+}
