@@ -20,7 +20,7 @@ export function registerPlaceOrderTool(server: McpServer): void {
         .min(1)
         .describe("The sys_id of the catalog item to order (from search_catalog_items or get_catalog_item_form)"),
       variables: z
-        .record(z.union([z.string(), z.number(), z.boolean()]))
+        .record(z.string(), z.union([z.string(), z.number(), z.boolean()]))
         .describe(
           "Key-value pairs mapping each form field name (variable.name) to the value provided by the user"
         ),
