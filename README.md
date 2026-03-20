@@ -180,16 +180,19 @@ Notes:
 ## Add to Microsoft Copilot Studio
 
 1. In Copilot Studio, add a new MCP server integration.
-2. Configure MCP server URL:
-   - `https://<function-app-host>/mcp`
-3. Configure authentication for MCP endpoint:
-   - Header name: `x-functions-key`
-   - Header value: `<function-key>`
-4. Save and test tool discovery.
-5. Verify all tools are visible:
+2. In the MCP onboarding wizard:
+  - **Server name**: ServiceNow MCP
+  - **Server description**: MCP server for ServiceNow catalog search, order form retrieval, and order placement
+  - **Server URL**: `https://<function-app-host>/mcp`
+  - **Authentication type**: API key (Header)
+    - **Header name**: `x-functions-key`
+    - **Header value**: `<function-key>` (retrieved from Azure)
+3. Save and allow Copilot Studio to discover tools automatically.
+4. Verify all tools are visible:
    - `search_catalog_items`
    - `get_catalog_item_form`
    - `place_order`
+5. (Optional) If you want ServiceNow calls to respect individual user permissions, configure your Copilot Studio integration layer to pass a ServiceNow user access token in the `x-servicenow-access-token` header for each MCP request. Without this header, the server uses app credentials (service principal).
 6. Run a prompt test flow:
    - Discover items with `search_catalog_items`
    - Render/collect form from `get_catalog_item_form`
@@ -211,4 +214,4 @@ Notes:
   - Verify function key is valid and passed correctly.
 - Empty catalog search results:
   - Adjust query text.
-  - Check optional default catalog/category filters.
+  - Ensure your ServiceNow user (via x-servicenow-access-token header) or app credentials have access to the catalogs you're searching.

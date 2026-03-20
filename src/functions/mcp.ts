@@ -11,15 +11,11 @@ import { createMcpExpressApp } from "../app";
  * Authentication: Azure Function key passed via header `x-functions-key`
  * or query parameter `code`.
  *
- * Supported HTTP methods:
- *   POST   - MCP request/response (primary method used by clients)
- *   GET    - MCP SSE stream (for clients that require server-push)
- *   DELETE - Close an MCP session
  */
 const handler = serverlessHttp(createMcpExpressApp());
 
 app.http("servicenow-mcp", {
-  methods: ["GET", "POST", "DELETE"],
+  methods: ["POST"],
   authLevel: "function",
   route: "mcp",
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
