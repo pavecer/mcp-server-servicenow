@@ -28,6 +28,85 @@ It provides three MCP tools:
   - `client_secret`
   - token endpoint available at `/oauth_token.do` (or custom path)
 
+## ServiceNow Setup
+
+The MCP server depends on standard ServiceNow Service Catalog APIs. The Azure side only hosts the MCP endpoint; access to catalog items is ultimately determined by what the ServiceNow token is allowed to see and order.
+
+### 1. Create or identify the OAuth application in ServiceNow
+
+You need an OAuth application that can issue access tokens for ServiceNow API calls.
+
+Minimum values required by this MCP server:
+
+- ServiceNow instance URL, for example `https://your-instance.service-now.com`
+- OAuth client ID
+- OAuth client secret
+- Token endpoint path, usually `/oauth_token.do`
+
+The server supports two operating models:
+
+1. Application token fallback
+  - The MCP server uses the configured client ID and client secret to obtain a ServiceNow bearer token.
+  - Catalog visibility and ordering rights are based on the permissions of that ServiceNow application or integration user.
+2. Per-user token pass-through
+  - The MCP caller sends `x-servicenow-access-token` with a ServiceNow user access token.
+  - Catalog visibility and ordering rights are based on that ServiceNow user's permissions.
+
+### 2. Enable access to Service Catalog APIs
+
+This implementation calls these ServiceNow endpoints:
+
+- `GET /api/sn_sc/servicecatalog/items`
+- `GET /api/sn_sc/servicecatalog/items/{sys_id}`
+- `POST /api/sn_sc/servicecatalog/items/{sys_id}/order_now`
+
+Confirm that the OAuth application and the effective ServiceNow user behind the token are allowed to call these APIs.
+
+### 3. Grant the correct ServiceNow permissions
+
+The MCP server does not implement its own catalog authorization rules. It relies on ServiceNow to enforce them.
+
+Make sure the effective user behind the token:
+
+- can see the catalogs and categories that should be searchable
+- can read the catalog item metadata and variables
+- can submit requests for the selected catalog items
+- has access to any dependent catalog variables, reference data, and request records needed after submission
+
+If you use application token fallback, assign these rights to the integration user or service principal represented by the OAuth client.
+
+If you use per-user token pass-through, assign these rights to the real end users or their groups/roles in ServiceNow.
+
+### 4. Validate catalog visibility in ServiceNow first
+
+Before testing the MCP server, validate directly in ServiceNow that the same token/user can:
+
+- search and view the intended catalog items
+- open the item form and read its variables
+- submit an order for the item
+
+If a catalog item is not visible in ServiceNow for that user, it will not become visible through this MCP server.
+
+### 5. Decide which identity model you want in production
+
+For production, choose one of these explicitly:
+
+1. Shared integration identity
+  - Simpler to operate
+  - All MCP calls see whatever the integration identity can access
+2. Per-user delegated identity
+  - Aligns best with your requirement that each caller only sees items they already have access to
+  - Requires the caller or integration layer to obtain a ServiceNow user token and send it as `x-servicenow-access-token`
+
+### 6. Recommended ServiceNow validation checklist
+
+- OAuth token issuance works with your chosen grant flow
+- Token can call `/api/sn_sc/servicecatalog/items`
+- Token can call `/api/sn_sc/servicecatalog/items/{sys_id}`
+- Token can call `/api/sn_sc/servicecatalog/items/{sys_id}/order_now`
+- Token returns only catalogs/items the effective user should see
+- Ordered request is visible afterward to the same effective user
+
 ## Local Development
 
 1. Install dependencies:
