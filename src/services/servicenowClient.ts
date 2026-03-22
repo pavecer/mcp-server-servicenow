@@ -59,7 +59,10 @@ export class ServiceNowClient {
 
   async getCatalogItem(itemSysId: string): Promise<ServiceNowCatalogItemDetail> {
     const client = await this.getClient();
-    const response = await client.get<{ result: ServiceNowCatalogItemDetail }>(`/api/sn_sc/servicecatalog/items/${itemSysId}`);
+    const response = await client.get<{ result: ServiceNowCatalogItemDetail }>(
+      `/api/sn_sc/servicecatalog/items/${itemSysId}`,
+      { params: { sysparm_expand_variables: "true" } }
+    );
     return response.data.result;
   }
 
