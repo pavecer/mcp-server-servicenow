@@ -3,8 +3,9 @@ import { ServiceNowCatalogItem, ServiceNowCatalogItemDetail, ServiceNowOrderResu
 /**
  * Builds an Adaptive Card that presents a list of catalog items for the user
  * to choose from after a search. Each item is shown with its name, description,
- * category, and catalog, and has a "Select this item" button that submits the
- * item's sys_id back to the agent so it can proceed to get_catalog_item_form.
+ * category, and catalog, and can be selected by tapping/clicking the item
+ * container, which submits the item's sys_id back to the agent so it can
+ * proceed to get_catalog_item_form.
  */
 export function buildCatalogItemSelectionAdaptiveCard(
   items: ServiceNowCatalogItem[]
