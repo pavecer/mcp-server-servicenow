@@ -68,7 +68,6 @@ export function buildCatalogItemSelectionAdaptiveCard(
       ],
       selectAction: {
         type: "Action.Submit",
-        title: "Select this item",
         data: {
           action: "select_catalog_item",
           itemSysId: item.sys_id,
