@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { ServiceNowClient } from "../services/servicenowClient";
+import { buildCatalogItemSelectionAdaptiveCard } from "../utils/adaptiveCards";
 
 const client = new ServiceNowClient();
 
@@ -12,7 +13,9 @@ export function registerSearchCatalogItemsTool(server: McpServer): void {
       "Accepts natural language text derived from the conversation and returns a ranked list of matching catalog items.",
       "When header x-servicenow-access-token is provided, results are returned based on that ServiceNow user's access permissions.",
       "Use this tool first to help the user discover and select available service catalog items.",
-      "Results include the item's sys_id (required for subsequent tools), name, short description, category, and catalog."
+      "Results include each item's sys_id (required for subsequent tools), name, short description, category, catalog,",
+      "categorySysId, and catalogSysId (use these to restrict follow-up searches to the same category or catalog).",
+      "An Adaptive Card (selectionAdaptiveCard) is also returned so the user can select their preferred item directly."
     ].join(" "),
     {
       query: z
@@ -60,6 +63,8 @@ export function registerSearchCatalogItemsTool(server: McpServer): void {
         };
       }
 
+      const selectionAdaptiveCard = buildCatalogItemSelectionAdaptiveCard(items);
+
       return {
         content: [
           {
@@ -71,8 +76,11 @@ export function registerSearchCatalogItemsTool(server: McpServer): void {
                 name: item.name,
                 short_description: item.short_description ?? null,
                 category: item.category?.title ?? item.category?.name ?? null,
-                catalog: item.sc_catalog?.title ?? item.sc_catalog?.name ?? null
-              }))
+                categorySysId: item.category?.sys_id ?? null,
+                catalog: item.sc_catalog?.title ?? item.sc_catalog?.name ?? null,
+                catalogSysId: item.sc_catalog?.sys_id ?? null
+              })),
+              selectionAdaptiveCard
             }, null, 2)
           }
         ]

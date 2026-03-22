@@ -1,4 +1,92 @@
-import { ServiceNowCatalogItemDetail, ServiceNowOrderResult, ServiceNowVariable } from "../types/servicenow";
+import { ServiceNowCatalogItem, ServiceNowCatalogItemDetail, ServiceNowOrderResult, ServiceNowVariable } from "../types/servicenow";
+
+/**
+ * Builds an Adaptive Card that presents a list of catalog items for the user
+ * to choose from after a search. Each item is shown with its name, description,
+ * category, and catalog, and has a "Select this item" button that submits the
+ * item's sys_id back to the agent so it can proceed to get_catalog_item_form.
+ */
+export function buildCatalogItemSelectionAdaptiveCard(
+  items: ServiceNowCatalogItem[]
+): Record<string, unknown> {
+  const body: Record<string, unknown>[] = [
+    {
+      type: "TextBlock",
+      text: "Select a Catalog Item",
+      size: "Large",
+      weight: "Bolder",
+      wrap: true
+    },
+    {
+      type: "TextBlock",
+      text: "Choose the item that best matches your request:",
+      wrap: true,
+      spacing: "Small",
+      isSubtle: true
+    }
+  ];
+
+  for (const item of items) {
+    const facts: Record<string, string>[] = [];
+
+    const categoryLabel = item.category?.title ?? item.category?.name;
+    const catalogLabel = item.sc_catalog?.title ?? item.sc_catalog?.name;
+
+    if (categoryLabel) {
+      facts.push({ title: "Category:", value: categoryLabel });
+    }
+    if (catalogLabel) {
+      facts.push({ title: "Catalog:", value: catalogLabel });
+    }
+
+    const container: Record<string, unknown> = {
+      type: "Container",
+      spacing: "Medium",
+      style: "emphasis",
+      items: [
+        {
+          type: "TextBlock",
+          text: item.name,
+          weight: "Bolder",
+          wrap: true
+        },
+        ...(item.short_description
+          ? [
+              {
+                type: "TextBlock",
+                text: item.short_description,
+                wrap: true,
+                isSubtle: true,
+                spacing: "Small"
+              }
+            ]
+          : []),
+        ...(facts.length > 0
+          ? [{ type: "FactSet", facts, spacing: "Small" }]
+          : [])
+      ],
+      selectAction: {
+        type: "Action.Submit",
+        title: "Select this item",
+        data: {
+          action: "select_catalog_item",
+          itemSysId: item.sys_id,
+          itemName: item.name
+        }
+      }
+    };
+
+    body.push(container);
+  }
+
+  return {
+    type: "AdaptiveCard",
+    $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
+    version: "1.5",
+    body,
+    actions: []
+  };
+}
 
 /**
  * Maps a ServiceNow variable to an Adaptive Card input element.
