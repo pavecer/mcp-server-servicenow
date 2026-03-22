@@ -4,6 +4,6 @@ dist/
 .env
 .env.*
 local.settings.json
-.vscode/
+
 *.log
 coverage/
