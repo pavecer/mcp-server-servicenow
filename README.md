@@ -4,8 +4,8 @@ This project hosts a stateless MCP server for ServiceNow on Azure Functions.
 
 It provides three MCP tools:
 
-- `search_catalog_items`: Search ServiceNow catalog items by free text intent (with optional category/catalog filtering).
-- `get_catalog_item_form`: Retrieve an item's variables and return an Adaptive Card form definition.
+- `search_catalog_items`: Search ServiceNow catalog items by free text intent (with optional category/catalog filtering). Returns matching items with their `sys_id`, `name`, `short_description`, `category`, `categorySysId`, `catalog`, `catalogSysId`, and a ready-to-render **Adaptive Card** (`selectionAdaptiveCard`) so the user can pick the right item interactively. Use `categorySysId`/`catalogSysId` from the results to restrict a follow-up search to the same category or catalog.
+- `get_catalog_item_form`: Retrieve an item's variables and return an Adaptive Card form definition the user fills in before ordering.
 - `place_order`: Place an order and return an Adaptive Card confirmation (request number, status, link).
 
 ## Architecture
@@ -273,9 +273,10 @@ Notes:
    - `place_order`
 5. (Optional) If you want ServiceNow calls to respect individual user permissions, configure your Copilot Studio integration layer to pass a ServiceNow user access token in the `x-servicenow-access-token` header for each MCP request. Without this header, the server uses app credentials (service principal).
 6. Run a prompt test flow:
-   - Discover items with `search_catalog_items`
-   - Render/collect form from `get_catalog_item_form`
-   - Submit order with `place_order`
+   - Discover items with `search_catalog_items` — the response contains a `selectionAdaptiveCard` that renders each result as a tappable container; the user taps to select, which returns `{ action: "select_catalog_item", itemSysId, itemName }`.
+   - Use the returned `itemSysId` to call `get_catalog_item_form` — the response contains an `adaptiveCard` with all required and optional input fields.
+   - The user fills in the Adaptive Card form and submits; the submission returns field values keyed by variable name.
+   - Call `place_order` with the collected variable values to submit the request — the response contains an `adaptiveCard` with the request number, status, and a link to ServiceNow.
 
 ## Security and Operations Notes
 
