@@ -2,11 +2,12 @@
 
 This project hosts a stateless MCP server for ServiceNow on Azure Functions.
 
-It provides three MCP tools:
+It provides four MCP tools:
 
 - `search_catalog_items`: Search ServiceNow catalog items by free text intent (with optional category/catalog filtering). Returns matching items with their `sys_id`, `name`, `short_description`, `category`, `categorySysId`, `catalog`, `catalogSysId`, and a ready-to-render **Adaptive Card** (`selectionAdaptiveCard`) so the user can pick the right item interactively. Use `categorySysId`/`catalogSysId` from the results to restrict a follow-up search to the same category or catalog.
 - `get_catalog_item_form`: Retrieve an item's variables and return an Adaptive Card form definition the user fills in before ordering.
 - `place_order`: Place an order and return an Adaptive Card confirmation (request number, status, link).
+- `validate_servicenow_configuration`: Validate OAuth token acquisition and effective permissions for Service Catalog APIs (`items` list, `item` detail, optional `order_now` probe).
 
 ## Architecture
 
@@ -234,6 +235,51 @@ To enforce ServiceNow catalog visibility based on the caller, send a ServiceNow 
 When this header is present, MCP tool calls use that token for ServiceNow API calls, so search and ordering follow that ServiceNow user's permissions.
 
 If the header is not present, the server falls back to configured client credentials token.
+
+## Validate ServiceNow OAuth and Permissions
+
+Use `validate_servicenow_configuration` to verify that your filled ServiceNow configuration works and that the effective identity has access to required Service Catalog APIs.
+
+Default behavior:
+
+- Uses `x-servicenow-access-token` if present.
+- Otherwise validates configured `client_credentials` settings.
+- Checks token/auth, catalog list access, and item detail access.
+- Skips `order_now` by default to avoid accidental request creation.
+
+Recommended first validation call:
+
+```json
+{
+  "name": "validate_servicenow_configuration",
+  "arguments": {
+    "query": "laptop",
+    "forceClientCredentials": true,
+    "probeOrderNow": false
+  }
+}
+```
+
+Optional explicit order permission probe (can create a request in ServiceNow):
+
+```json
+{
+  "name": "validate_servicenow_configuration",
+  "arguments": {
+    "query": "laptop",
+    "probeOrderNow": true,
+    "orderProbeItemSysId": "<test-item-sys-id>",
+    "orderProbeVariables": {}
+  }
+}
+```
+
+Interpretation tips:
+
+- `auth.client_credentials` failed: OAuth app settings (`instance`, `client_id`, `client_secret`, token path) are incorrect or token issuance is not allowed.
+- `api.catalog.list` failed with `401/403`: identity is authenticated but lacks API or catalog rights.
+- `api.catalog.list` passed with `foundCount=0`: query mismatch or limited catalog visibility for the identity.
+- `api.catalog.order_now` warning: by default the order probe is skipped; set `probeOrderNow=true` only with a controlled test item.
 
 ## Smoke Test (All 3 Tools)
 

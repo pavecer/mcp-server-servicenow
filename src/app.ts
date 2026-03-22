@@ -21,8 +21,9 @@ export function createMcpExpressApp(): express.Express {
     res.json({ status: "ok", server: "servicenow-mcp" });
   });
 
-  // Serve MCP over Streamable HTTP transport (stateless mode)
-  expressApp.all("*", async (req: Request, res: Response): Promise<void> => {
+    // Serve MCP over Streamable HTTP transport (stateless mode)
+    // Use app.use as Express 5-compatible catch-all route.
+    expressApp.use(async (req: Request, res: Response): Promise<void> => {
     const server = new McpServer({
       name: "servicenow-mcp",
       version: "1.0.0"

@@ -1,4 +1,4 @@
-import { app } from "@azure/functions";
+import { app, HttpRequest } from "@azure/functions";
 import serverlessHttp from "serverless-http";
 import { createMcpExpressApp } from "../app";
 
@@ -12,12 +12,33 @@ import { createMcpExpressApp } from "../app";
  * or query parameter `code`.
  *
  */
-const handler = serverlessHttp(createMcpExpressApp());
+const handler = serverlessHttp(createMcpExpressApp(), {
+  provider: "azure"
+});
+
+async function toMutableAzureRequest(request: HttpRequest): Promise<Record<string, unknown>> {
+  const requestUrl = new URL(request.url);
+  const headers = Object.fromEntries(request.headers.entries());
+  const query = Object.fromEntries(requestUrl.searchParams.entries());
+
+  return {
+    method: request.method,
+    url: requestUrl.pathname,
+    requestPath: requestUrl.pathname,
+    headers,
+    query,
+    // serverless-http azure provider expects rawBody for request creation.
+    rawBody: await request.text()
+  };
+}
 
 app.http("servicenow-mcp", {
   methods: ["POST"],
   authLevel: "function",
   route: "mcp",
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  handler: handler as any
+  // Azure Functions v4 passes (request, context), while serverless-http Azure provider expects (context, req).
+  handler: async (request, context) => {
+    const mutableReq = await toMutableAzureRequest(request);
+    return handler(context, mutableReq);
+  }
 });
