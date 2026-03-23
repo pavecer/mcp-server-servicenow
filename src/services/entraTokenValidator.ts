@@ -164,12 +164,37 @@ export async function validateEntraToken(
     }
   }
 
-  // Issuer must be the expected Entra v2 endpoint.
-  const expectedIss = `https://login.microsoftonline.com/${tenantId}/v2.0`;
-  if (payload.iss !== expectedIss) {
-    throw new Error(`Invalid issuer`);
+  // Issuer must be a valid Entra v2 endpoint for the expected tenant.
+  if (!payload.iss) {
+    throw new Error("Missing issuer");
   }
 
+  let issUrl: URL;
+  try {
+    issUrl = new URL(payload.iss);
+  } catch {
+    throw new Error("Invalid issuer");
+  }
+
+  const issuerHostValid =
+    issUrl.hostname === "login.microsoftonline.com" ||
+    issUrl.hostname === "sts.windows.net";
+
+  // Normalize path and extract "{tenant}/v2.0".
+  const pathSegments = issUrl.pathname.replace(/^\/+|\/+$/g, "").split("/");
+  const [issuerTenant, issuerVersion] = pathSegments;
+
+  const issuerVersionValid = issuerVersion === "v2.0";
+  const issuerTenantMatchesConfig = issuerTenant === tenantId;
+  const issuerTenantMatchesTid = typeof payload.tid === "string" && issuerTenant === payload.tid;
+
+  if (
+    !issuerHostValid ||
+    !issuerVersionValid ||
+    !(issuerTenantMatchesConfig || issuerTenantMatchesTid)
+  ) {
+    throw new Error("Invalid issuer");
+  }
   // At least one aud value must be in the accepted set.
   const tokenAudiences = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
   if (!tokenAudiences.some(a => acceptedAudiences.has(a))) {
