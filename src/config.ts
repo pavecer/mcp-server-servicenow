@@ -27,6 +27,10 @@ export const config = {
     clientId: process.env.ENTRA_CLIENT_ID,
     // Used in the DCR response so Copilot Studio can use the auth code flow.
     clientSecret: process.env.ENTRA_CLIENT_SECRET,
+    // Optional RFC 7591 "initial access token" that must be presented as
+    // "Authorization: Bearer <token>" when calling POST /oauth/register.
+    // When unset the endpoint is open (required for automated Copilot Studio DCR).
+    dcrRegistrationToken: process.env.ENTRA_DCR_REGISTRATION_TOKEN,
     // Expected audience in the Bearer token. Defaults to the Entra client ID.
     // Override to "api://<clientId>" when the app exposes a custom App ID URI.
     audience: process.env.ENTRA_AUDIENCE,
