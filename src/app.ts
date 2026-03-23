@@ -64,8 +64,10 @@ export function createMcpExpressApp(): express.Express {
   // Entra ID Bearer token validation
   // ---------------------------------------------------------------------------
   // When ENTRA_TENANT_ID and ENTRA_CLIENT_ID are configured (and
-  // ENTRA_AUTH_DISABLED is not true), every POST to the MCP endpoint must carry
-  // a valid Entra access token in the Authorization: Bearer header.
+  // ENTRA_AUTH_DISABLED is not true), POST requests to the MCP endpoint must
+  // carry a valid Entra access token in the Authorization: Bearer header.
+  // GET (SSE readiness), DELETE (session cleanup), and OPTIONS (CORS preflight)
+  // are explicitly exempted — only POST carries MCP tool payloads.
   // Validated caller identity is forwarded through RequestContext so tools can
   // log or use it.  The ServiceNow service account is still used for API calls
   // unless the caller also supplies x-servicenow-access-token.
@@ -78,9 +80,10 @@ export function createMcpExpressApp(): express.Express {
       return;
     }
 
-    // Skip non-tool requests (OPTIONS, etc.) — the downstream middleware handles
-    // those before any MCP work begins.
-    if (req.method === "OPTIONS") {
+    // Only enforce Bearer token auth on POST requests (MCP tool calls).
+    // GET, DELETE, and OPTIONS are used for SSE, session management, and CORS
+    // and must remain accessible without a token.
+    if (req.method !== "POST") {
       next();
       return;
     }

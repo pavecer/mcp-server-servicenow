@@ -164,10 +164,44 @@ export async function validateEntraToken(
     }
   }
 
-  // Issuer must be the expected Entra v2 endpoint.
-  const expectedIss = `https://login.microsoftonline.com/${tenantId}/v2.0`;
-  if (payload.iss !== expectedIss) {
-    throw new Error(`Invalid issuer`);
+  // Issuer validation: must be a valid Entra v2.0 endpoint for the expected tenant.
+  // Entra always emits the GUID-based tenant ID in the iss claim even when
+  // ENTRA_TENANT_ID is configured as a domain.  Accept the issuer when its host
+  // is login.microsoftonline.com or sts.windows.net, the path ends in /v2.0,
+  // and the tenant segment matches either the configured tenantId or the tid
+  // claim in the token.
+  if (!payload.iss) {
+    throw new Error("Missing issuer claim");
+  }
+
+  let issUrl: URL;
+  try {
+    issUrl = new URL(payload.iss);
+  } catch {
+    throw new Error("Invalid issuer");
+  }
+
+  const issuerHostValid =
+    issUrl.hostname === "login.microsoftonline.com" ||
+    issUrl.hostname === "sts.windows.net";
+
+  const pathSegments = issUrl.pathname.replace(/^\/+|\/+$/g, "").split("/");
+  if (pathSegments.length < 2) {
+    throw new Error("Invalid issuer");
+  }
+
+  const [issuerTenant, issuerVersion] = pathSegments;
+
+  const issuerVersionValid = issuerVersion === "v2.0";
+  const issuerTenantMatchesConfig = issuerTenant === tenantId;
+  const issuerTenantMatchesTid = typeof payload.tid === "string" && issuerTenant === payload.tid;
+
+  if (
+    !issuerHostValid ||
+    !issuerVersionValid ||
+    !(issuerTenantMatchesConfig || issuerTenantMatchesTid)
+  ) {
+    throw new Error("Invalid issuer");
   }
 
   // At least one aud value must be in the accepted set.
