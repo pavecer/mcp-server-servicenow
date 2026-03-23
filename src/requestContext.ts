@@ -2,6 +2,8 @@ import { AsyncLocalStorage } from "node:async_hooks";
 
 export interface RequestContext {
   serviceNowAccessToken?: string;
+  callerEntraObjectId?: string;
+  callerUpn?: string;
 }
 
 const requestContextStorage = new AsyncLocalStorage<RequestContext>();
