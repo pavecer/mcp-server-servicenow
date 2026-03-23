@@ -1,5 +1,6 @@
 import { app, HttpRequest, HttpResponseInit, InvocationContext } from "@azure/functions";
 import axios from "axios";
+import crypto from "node:crypto";
 import { config } from "../config";
 
 /**
@@ -24,13 +25,16 @@ import { config } from "../config";
  *        Returns 404 when ENTRA_CLIENT_SECRET is not configured (the "Dynamic"
  *        or "Manual" Copilot Studio auth types can be used instead).
  *
- *        SECURITY NOTE: This endpoint is unauthenticated by design — RFC 7591
- *        DCR requires that clients can register without prior credentials.
- *        The secret it returns is the ENTRA_CLIENT_SECRET already stored in Key
- *        Vault; no new credentials are created.  Protect the Function App with
- *        network restrictions (VNet integration / Private Endpoints) in high-
- *        security environments, or set ENTRA_CLIENT_SECRET to empty to disable
- *        DCR and use the "Dynamic" or "Manual" wizard option instead.
+ *        SECURITY NOTE: This endpoint is unauthenticated by design when no
+ *        initial access token is configured — RFC 7591 DCR allows clients to
+ *        register without prior credentials.  To restrict access, set
+ *        ENTRA_DCR_REGISTRATION_TOKEN to a strong random secret; the endpoint
+ *        will then require "Authorization: Bearer <token>" before returning
+ *        credentials.  If Copilot Studio's automated DCR call supports sending
+ *        custom auth headers, configure it to include the token.  Alternatively,
+ *        protect the Function App at the network level (VNet integration /
+ *        Private Endpoints), or clear ENTRA_CLIENT_SECRET to disable DCR
+ *        entirely and use the "Dynamic" or "Manual" wizard option instead.
  */
 
 const OIDC_CACHE_MAX_AGE_SECONDS = 3600; // 1 hour
@@ -165,10 +169,10 @@ app.http("oidc-discovery", {
 // ---------------------------------------------------------------------------
 
 async function oauthRegisterHandler(
-  _request: HttpRequest,
+  request: HttpRequest,
   _context: InvocationContext
 ): Promise<HttpResponseInit> {
-  const { clientId, clientSecret } = config.entraAuth;
+  const { clientId, clientSecret, dcrRegistrationToken } = config.entraAuth;
 
   if (!clientId || !clientSecret) {
     return {
@@ -182,6 +186,34 @@ async function oauthRegisterHandler(
           "the Entra application credentials manually."
       })
     };
+  }
+
+  // When ENTRA_DCR_REGISTRATION_TOKEN is configured, require an RFC 7591
+  // initial access token in the Authorization header before returning credentials.
+  // Use constant-time comparison to prevent timing-based token inference.
+  if (dcrRegistrationToken) {
+    const authHeader = request.headers.get("authorization") ?? "";
+    const presentedToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+    const expected = Buffer.from(dcrRegistrationToken, "utf8");
+    const presented = Buffer.from(presentedToken, "utf8");
+    const tokenValid =
+      expected.length === presented.length &&
+      crypto.timingSafeEqual(expected, presented);
+    if (!tokenValid) {
+      return {
+        status: 401,
+        headers: {
+          "Content-Type": "application/json",
+          "WWW-Authenticate": 'Bearer realm="oauth-register"'
+        },
+        body: JSON.stringify({
+          error: "unauthorized",
+          error_description:
+            "A valid registration access token is required. " +
+            "Set ENTRA_DCR_REGISTRATION_TOKEN and pass it as 'Authorization: Bearer <token>'."
+        })
+      };
+    }
   }
 
   // Return the pre-registered Entra application credentials.

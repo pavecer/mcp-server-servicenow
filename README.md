@@ -226,6 +226,7 @@ Optional settings for Entra auth (production; leave blank for local testing):
 | `ENTRA_CLIENT_SECRET` | Entra client secret (required for DCR) |
 | `ENTRA_AUDIENCE` | Expected `aud` in Entra tokens (default: `api://<ENTRA_CLIENT_ID>`) |
 | `ENTRA_AUTH_DISABLED` | Set `true` to skip Bearer token validation locally (default in sample: `true`) |
+| `ENTRA_DCR_REGISTRATION_TOKEN` | Optional initial access token required on `POST /oauth/register` |
 
 > **Local testing tip**: `ENTRA_AUTH_DISABLED=true` is pre-set in the sample so that the smoke test and direct curl/tool calls work without an Entra token. Never deploy with this flag set to `true`.
 
@@ -461,6 +462,17 @@ Optional variables: `ITEM_SYS_ID`, `REQUESTED_FOR`, `FUNCTION_KEY`
 - Application Insights is enabled for monitoring.
 - Use separate `azd` environments for dev/test/prod.
 - Never set `ENTRA_AUTH_DISABLED=true` in a deployed environment.
+
+### DCR endpoint (`/oauth/register`) security
+
+`POST /oauth/register` returns the `ENTRA_CLIENT_SECRET` to callers and is `authLevel: anonymous` by design — RFC 7591 DCR expects clients to register without prior credentials. Two options to harden this endpoint:
+
+| Option | How |
+|---|---|
+| **Initial access token** | Set `ENTRA_DCR_REGISTRATION_TOKEN` to a strong random value. The endpoint will require `Authorization: Bearer <token>` before returning credentials. Configure the same token in any client or Copilot Studio custom header. |
+| **Disable DCR** | Clear (unset) `ENTRA_CLIENT_SECRET`. The registration endpoint returns 404 and the discovery document omits `registration_endpoint`. Use the "Dynamic" or "Manual" Copilot Studio auth option instead. |
+
+Network-level protection (VNet integration / Private Endpoints) is also recommended for production deployments.
 
 ## Troubleshooting
 
