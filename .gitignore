@@ -8,8 +8,6 @@ local.settings.json
 *.log
 coverage/
 
-justignore.txt
+# Local-only folder: scratch scripts, credentials notes, temp files
+local/
 logs/
-# Temporary / one-off scripts that should not be tracked
-tmp-*.mjs
-test-oauth-endpoints.ps1
