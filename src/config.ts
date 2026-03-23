@@ -11,7 +11,10 @@ export const config = {
     instanceUrl: getRequiredEnv("SERVICENOW_INSTANCE_URL"),
     clientId: getRequiredEnv("SERVICENOW_CLIENT_ID"),
     clientSecret: getRequiredEnv("SERVICENOW_CLIENT_SECRET"),
+    username: process.env.SERVICENOW_USERNAME,
+    password: process.env.SERVICENOW_PASSWORD,
     tokenPath: process.env.SERVICENOW_OAUTH_TOKEN_PATH || "/oauth_token.do",
-    tokenAuthStyle: process.env.SERVICENOW_OAUTH_CLIENT_AUTH_STYLE || "auto"
+    tokenAuthStyle: process.env.SERVICENOW_OAUTH_CLIENT_AUTH_STYLE || "auto",
+    grantType: process.env.SERVICENOW_OAUTH_GRANT_TYPE || "auto"
   }
 };
