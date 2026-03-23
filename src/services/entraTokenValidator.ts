@@ -102,14 +102,23 @@ function base64urlToBuffer(input: string): Buffer {
  * tenant's public JWKS endpoint. Uses only Node.js 20 built-ins (node:crypto)
  * plus the project-local axios instance — no extra dependencies.
  *
+ * For multi-tenant scenarios, supports validating tokens issued by:
+ * - The primary tenant (ENTRA_TENANT_ID)
+ * - Trusted remote tenants (ENTRA_TRUSTED_TENANT_IDS)
+ * - Any Microsoft tenant (ENTRA_ALLOW_ANY_TENANT=true, use with caution)
+ *
  * @param bearerToken  Raw JWT value (without "Bearer " prefix).
- * @param tenantId     Entra tenant ID (GUID or domain).
+ * @param primaryTenantId     Primary/home Entra tenant ID (GUID or domain).
  * @param acceptedAudiences  Set of allowed `aud` values (at least one must match).
+ * @param trustedTenantIds   Optional array of trusted remote tenant GUIDs for cross-tenant support.
+ * @param allowAnyTenant     Optional boolean to accept tokens from any Microsoft tenant (use with caution).
  */
 export async function validateEntraToken(
   bearerToken: string,
-  tenantId: string,
-  acceptedAudiences: Set<string>
+  primaryTenantId: string,
+  acceptedAudiences: Set<string>,
+  trustedTenantIds: string[] = [],
+  allowAnyTenant: boolean = false
 ): Promise<EntraTokenPayload> {
   const parts = bearerToken.split(".");
   if (parts.length !== 3) {
@@ -130,8 +139,26 @@ export async function validateEntraToken(
     throw new Error("JWT header missing kid");
   }
 
-  // Fetch public key and verify RS256 signature.
-  const jwksUri = `https://login.microsoftonline.com/${tenantId}/discovery/v2.0/keys`;
+  // Extract tenant ID from token's tid claim (tells us which tenant issued the token)
+  const tokenTenantId = payload.tid;
+  if (!tokenTenantId || typeof tokenTenantId !== "string") {
+    throw new Error("Missing or invalid tenant ID (tid) claim in token");
+  }
+
+  // Validate tenant: must be primary tenant, a trusted tenant, or any tenant if allowed
+  const isTrustedTenant = tokenTenantId === primaryTenantId ||
+    trustedTenantIds.includes(tokenTenantId);
+  
+  if (!isTrustedTenant && !allowAnyTenant) {
+    throw new Error(
+      `Token issued by untrusted tenant ${tokenTenantId}. ` +
+      `Primary tenant: ${primaryTenantId}, ` +
+      `Trusted tenants: [${trustedTenantIds.join(", ")}]`
+    );
+  }
+
+  // Fetch public key and verify RS256 signature using the issuing tenant's JWKS endpoint.
+  const jwksUri = `https://login.microsoftonline.com/${tokenTenantId}/discovery/v2.0/keys`;
   const publicKey = await getSigningKey(header.kid, jwksUri);
 
   const verifier = crypto.createVerify("RSA-SHA256");
@@ -164,12 +191,8 @@ export async function validateEntraToken(
     }
   }
 
-  // Issuer validation: must be a valid Entra v2.0 endpoint for the expected tenant.
-  // Entra always emits the GUID-based tenant ID in the iss claim even when
-  // ENTRA_TENANT_ID is configured as a domain.  Accept the issuer when its host
-  // is login.microsoftonline.com or sts.windows.net, the path ends in /v2.0,
-  // and the tenant segment matches either the configured tenantId or the tid
-  // claim in the token.
+  // Issuer validation: must be a valid Entra v2.0 endpoint for the issuing tenant.
+  // The issuer URL always uses the token's tenant ID (from tid claim).
   if (!payload.iss) {
     throw new Error("Missing issuer claim");
   }
@@ -193,14 +216,10 @@ export async function validateEntraToken(
   const [issuerTenant, issuerVersion] = pathSegments;
 
   const issuerVersionValid = issuerVersion === "v2.0";
-  const issuerTenantMatchesConfig = issuerTenant === tenantId;
-  const issuerTenantMatchesTid = typeof payload.tid === "string" && issuerTenant === payload.tid;
+  // Issuer tenant should match the tid claim (since we just validated tid is trusted)
+  const issuerTenantMatchesTid = issuerTenant === tokenTenantId;
 
-  if (
-    !issuerHostValid ||
-    !issuerVersionValid ||
-    !(issuerTenantMatchesConfig || issuerTenantMatchesTid)
-  ) {
+  if (!issuerHostValid || !issuerVersionValid || !issuerTenantMatchesTid) {
     throw new Error("Invalid issuer");
   }
 

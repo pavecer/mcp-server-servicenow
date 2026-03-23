@@ -42,6 +42,12 @@ param entraClientSecret string = ''
 @description('Expected audience override in Entra tokens (optional; defaults to entraClientId).')
 param entraAudience string = ''
 
+@description('Comma-separated list of trusted Entra tenant IDs for cross-tenant token validation (optional).')
+param entraTrustedTenantIds string = ''
+
+@description('Allow tokens from any Entra tenant (true/false). Keep false for production unless explicitly required.')
+param entraAllowAnyTenant string = 'false'
+
 // ---------------------------------------------------------------------------
 // Variables
 // ---------------------------------------------------------------------------
@@ -213,6 +219,8 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
           value: empty(entraClientSecret) ? '' : '@Microsoft.KeyVault(SecretUri=${entraClientSecretKeyVaultSecret.properties.secretUriWithVersion})'
         }
         { name: 'ENTRA_AUDIENCE', value: entraAudience }
+        { name: 'ENTRA_TRUSTED_TENANT_IDS', value: entraTrustedTenantIds }
+        { name: 'ENTRA_ALLOW_ANY_TENANT', value: entraAllowAnyTenant }
       ]
     }
     functionAppConfig: {

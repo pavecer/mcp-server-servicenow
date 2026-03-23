@@ -101,7 +101,13 @@ export function createMcpExpressApp(): express.Express {
     const acceptedAudiences = buildAcceptedAudiences(entra.clientId, entra.audience ?? undefined);
 
     try {
-      const payload = await validateEntraToken(token, entra.tenantId, acceptedAudiences);
+      const payload = await validateEntraToken(
+        token,
+        entra.tenantId,
+        acceptedAudiences,
+        entra.trustedTenantIds,
+        entra.allowAnyTenant
+      );
       res.locals.callerEntraObjectId = payload.oid;
       res.locals.callerUpn = payload.preferred_username || payload.upn;
       next();
