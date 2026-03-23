@@ -121,34 +121,46 @@ async function oidcDiscoveryHandler(
   const requestUrl = new URL(request.url);
   const serverBase = `${requestUrl.protocol}//${requestUrl.host}`;
 
-  // Fetch real metadata from Microsoft so our issuer/endpoint values exactly
-  // match what Entra emits in tokens (which use the tenant GUID, not a domain).
-  const msMetadata = await fetchMsOidcMetadata(tenantId);
-  const issuerBase =
-    msMetadata.issuer ??
-    `https://login.microsoftonline.com/${tenantId}/v2.0`;
-
-  // For cross-tenant scenarios (Copilot Studio in a different Entra tenant), the
-  // authorization and token endpoints must use the /common/ path so that users
-  // from any Microsoft tenant can authenticate.  When no cross-tenant config is
-  // present, use the primary tenant's endpoints from Microsoft's discovery doc.
+  // For cross-tenant scenarios (Copilot Studio in a different Entra tenant), all
+  // OIDC document values — issuer, authorization_endpoint, token_endpoint, and
+  // jwks_uri — must be sourced from Microsoft's /common metadata rather than the
+  // primary tenant's.  The /common issuer is "https://login.microsoftonline.com/
+  // {tenantid}/v2.0" (literal template placeholder), which OIDC clients use to
+  // accept tokens from any tenant while still validating the iss claim in each
+  // individual token.  Without this, a token issued to a user in Tenant B carries
+  // an iss that doesn't match the Tenant A issuer in the discovery doc.
   const isCrossTenant =
     config.entraAuth.allowAnyTenant ||
     (config.entraAuth.trustedTenantIds?.length ?? 0) > 0;
 
-  const authorizationEndpoint = isCrossTenant
-    ? "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
-    : (msMetadata.authorization_endpoint ??
-        `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/authorize`);
+  // Fetch real endpoint URLs from Microsoft so values are always accurate.
+  // In cross-tenant mode use the /common endpoint so all fields are consistent.
+  const msMetadataTenant = isCrossTenant ? "common" : tenantId;
+  const msMetadata = await fetchMsOidcMetadata(msMetadataTenant);
 
-  const tokenEndpoint = isCrossTenant
-    ? "https://login.microsoftonline.com/common/oauth2/v2.0/token"
-    : (msMetadata.token_endpoint ??
-        `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`);
+  const issuerBase =
+    msMetadata.issuer ??
+    (isCrossTenant
+      ? "https://login.microsoftonline.com/{tenantid}/v2.0"
+      : `https://login.microsoftonline.com/${tenantId}/v2.0`);
+
+  const authorizationEndpoint =
+    msMetadata.authorization_endpoint ??
+    (isCrossTenant
+      ? "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
+      : `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/authorize`);
+
+  const tokenEndpoint =
+    msMetadata.token_endpoint ??
+    (isCrossTenant
+      ? "https://login.microsoftonline.com/common/oauth2/v2.0/token"
+      : `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`);
 
   const jwksUri =
     msMetadata.jwks_uri ??
-    `https://login.microsoftonline.com/${tenantId}/discovery/v2.0/keys`;
+    (isCrossTenant
+      ? "https://login.microsoftonline.com/common/discovery/v2.0/keys"
+      : `https://login.microsoftonline.com/${tenantId}/discovery/v2.0/keys`);
 
   const discoveryDoc = {
     issuer: issuerBase,
