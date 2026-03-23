@@ -22,6 +22,26 @@ param serviceNowClientId string
 @secure()
 param serviceNowClientSecret string
 
+@description('ServiceNow integration user username (for password grant).')
+param serviceNowUsername string = ''
+
+@description('ServiceNow integration user password (for password grant).')
+@secure()
+param serviceNowPassword string = ''
+
+@description('Entra tenant ID for OAuth 2.0 authentication (optional).')
+param entraTenantId string = ''
+
+@description('Entra application client ID for OAuth 2.0 authentication (optional).')
+param entraClientId string = ''
+
+@description('Entra application client secret for DCR (optional).')
+@secure()
+param entraClientSecret string = ''
+
+@description('Expected audience override in Entra tokens (optional; defaults to entraClientId).')
+param entraAudience string = ''
+
 // ---------------------------------------------------------------------------
 // Variables
 // ---------------------------------------------------------------------------
@@ -86,6 +106,22 @@ resource serviceNowClientSecretKeyVaultSecret 'Microsoft.KeyVault/vaults/secrets
   name: 'servicenow-client-secret'
   properties: {
     value: serviceNowClientSecret
+  }
+}
+
+resource serviceNowPasswordKeyVaultSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (!empty(serviceNowPassword)) {
+  parent: keyVault
+  name: 'servicenow-password'
+  properties: {
+    value: serviceNowPassword
+  }
+}
+
+resource entraClientSecretKeyVaultSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (!empty(entraClientSecret)) {
+  parent: keyVault
+  name: 'entra-client-secret'
+  properties: {
+    value: entraClientSecret
   }
 }
 
@@ -162,6 +198,21 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
           value: '@Microsoft.KeyVault(SecretUri=${serviceNowClientSecretKeyVaultSecret.properties.secretUriWithVersion})'
         }
         { name: 'SERVICENOW_OAUTH_TOKEN_PATH', value: '/oauth_token.do' }
+        { name: 'SERVICENOW_OAUTH_GRANT_TYPE', value: 'auto' }
+        { name: 'SERVICENOW_USERNAME', value: serviceNowUsername }
+        {
+          name: 'SERVICENOW_PASSWORD'
+          // Reference Key Vault when a password was provided; otherwise empty.
+          value: empty(serviceNowPassword) ? '' : '@Microsoft.KeyVault(SecretUri=${serviceNowPasswordKeyVaultSecret.properties.secretUriWithVersion})'
+        }
+        // Entra ID OAuth 2.0 configuration (optional)
+        { name: 'ENTRA_TENANT_ID', value: entraTenantId }
+        { name: 'ENTRA_CLIENT_ID', value: entraClientId }
+        {
+          name: 'ENTRA_CLIENT_SECRET'
+          value: empty(entraClientSecret) ? '' : '@Microsoft.KeyVault(SecretUri=${entraClientSecretKeyVaultSecret.properties.secretUriWithVersion})'
+        }
+        { name: 'ENTRA_AUDIENCE', value: entraAudience }
       ]
     }
     functionAppConfig: {
