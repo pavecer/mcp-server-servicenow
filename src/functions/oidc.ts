@@ -133,7 +133,10 @@ async function oidcDiscoveryHandler(
     ...(config.entraAuth.clientSecret
       ? { registration_endpoint: `${serverBase}/oauth/register` }
       : {}),
-    scopes_supported: ["openid", "profile", "email", "offline_access"],
+    scopes_supported: [
+      `api://${clientId}/access_as_user`,
+      "openid", "profile", "email", "offline_access"
+    ],
     response_types_supported: ["code"],
     response_modes_supported: ["query", "fragment"],
     grant_types_supported: ["authorization_code", "refresh_token"],
@@ -226,7 +229,8 @@ async function oauthRegisterHandler(
     client_secret_expires_at: 0,
     grant_types: ["authorization_code", "refresh_token"],
     response_types: ["code"],
-    token_endpoint_auth_method: "client_secret_post"
+    token_endpoint_auth_method: "client_secret_post",
+    scope: `api://${clientId}/access_as_user openid profile email offline_access`
   };
 
   return {
