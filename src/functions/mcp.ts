@@ -41,8 +41,8 @@ async function toMutableAzureRequest(request: HttpRequest): Promise<Record<strin
 }
 
 app.http("servicenow-mcp", {
-  methods: ["POST"],
-  authLevel: "function",
+  methods: ["GET", "POST", "DELETE", "OPTIONS"],
+  authLevel: "anonymous",
   route: "mcp",
   // Azure Functions v4 passes (request, context), while serverless-http Azure provider expects (context, req).
   handler: async (request, context) => {
