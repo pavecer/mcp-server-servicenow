@@ -10,3 +10,6 @@ coverage/
 
 justignore.txt
 logs/
+# Temporary / one-off scripts that should not be tracked
+tmp-*.mjs
+test-oauth-endpoints.ps1

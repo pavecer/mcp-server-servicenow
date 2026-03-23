@@ -17,6 +17,9 @@ import { config } from "../config";
  *        The issuer and endpoint URLs are proxied from Microsoft's real OIDC
  *        discovery document so they stay accurate even when ENTRA_TENANT_ID is
  *        configured as a domain rather than a GUID.
+ *        When ENTRA_TRUSTED_TENANT_IDS or ENTRA_ALLOW_ANY_TENANT is set, the
+ *        authorization and token endpoints use the /common/ tenant so that users
+ *        from any Entra tenant can authenticate (cross-tenant support).
  *
  *   POST /oauth/register
  *        RFC 7591 Dynamic Client Registration endpoint.  Returns the
@@ -35,10 +38,22 @@ import { config } from "../config";
  *        protect the Function App at the network level (VNet integration /
  *        Private Endpoints), or clear ENTRA_CLIENT_SECRET to disable DCR
  *        entirely and use the "Dynamic" or "Manual" wizard option instead.
+ *
+ * CORS: All endpoints include Access-Control-Allow-Origin: * headers and handle
+ * OPTIONS preflight requests so that browser-based clients (including Copilot
+ * Studio) can reach them from any origin without being blocked.
  */
 
 const OIDC_CACHE_MAX_AGE_SECONDS = 3600; // 1 hour
 const MS_METADATA_CACHE_TTL_MS = OIDC_CACHE_MAX_AGE_SECONDS * 1_000;
+
+// CORS headers included on every OIDC response so that browser-based clients
+// (including Microsoft Copilot Studio) can reach these endpoints cross-origin.
+const CORS_HEADERS: Record<string, string> = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization"
+};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -96,7 +111,7 @@ async function oidcDiscoveryHandler(
   if (!tenantId || !clientId) {
     return {
       status: 404,
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...CORS_HEADERS },
       body: JSON.stringify({ error: "Entra ID is not configured on this server" })
     };
   }
@@ -106,21 +121,46 @@ async function oidcDiscoveryHandler(
   const requestUrl = new URL(request.url);
   const serverBase = `${requestUrl.protocol}//${requestUrl.host}`;
 
-  // Fetch real metadata from Microsoft so our issuer/endpoint values exactly
-  // match what Entra emits in tokens (which use the tenant GUID, not a domain).
-  const msMetadata = await fetchMsOidcMetadata(tenantId);
+  // For cross-tenant scenarios (Copilot Studio in a different Entra tenant), all
+  // OIDC document values — issuer, authorization_endpoint, token_endpoint, and
+  // jwks_uri — must be sourced from Microsoft's /common metadata rather than the
+  // primary tenant's.  The /common issuer is "https://login.microsoftonline.com/
+  // {tenantid}/v2.0" (literal template placeholder), which OIDC clients use to
+  // accept tokens from any tenant while still validating the iss claim in each
+  // individual token.  Without this, a token issued to a user in Tenant B carries
+  // an iss that doesn't match the Tenant A issuer in the discovery doc.
+  const isCrossTenant =
+    config.entraAuth.allowAnyTenant ||
+    (config.entraAuth.trustedTenantIds?.length ?? 0) > 0;
+
+  // Fetch real endpoint URLs from Microsoft so values are always accurate.
+  // In cross-tenant mode use the /common endpoint so all fields are consistent.
+  const msMetadataTenant = isCrossTenant ? "common" : tenantId;
+  const msMetadata = await fetchMsOidcMetadata(msMetadataTenant);
+
   const issuerBase =
     msMetadata.issuer ??
-    `https://login.microsoftonline.com/${tenantId}/v2.0`;
+    (isCrossTenant
+      ? "https://login.microsoftonline.com/{tenantid}/v2.0"
+      : `https://login.microsoftonline.com/${tenantId}/v2.0`);
+
   const authorizationEndpoint =
     msMetadata.authorization_endpoint ??
-    `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/authorize`;
+    (isCrossTenant
+      ? "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
+      : `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/authorize`);
+
   const tokenEndpoint =
     msMetadata.token_endpoint ??
-    `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`;
+    (isCrossTenant
+      ? "https://login.microsoftonline.com/common/oauth2/v2.0/token"
+      : `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`);
+
   const jwksUri =
     msMetadata.jwks_uri ??
-    `https://login.microsoftonline.com/${tenantId}/discovery/v2.0/keys`;
+    (isCrossTenant
+      ? "https://login.microsoftonline.com/common/discovery/v2.0/keys"
+      : `https://login.microsoftonline.com/${tenantId}/discovery/v2.0/keys`);
 
   const discoveryDoc = {
     issuer: issuerBase,
@@ -154,7 +194,8 @@ async function oidcDiscoveryHandler(
     headers: {
       "Content-Type": "application/json",
       // Allow browsers / clients to cache the discovery document.
-      "Cache-Control": `public, max-age=${OIDC_CACHE_MAX_AGE_SECONDS}`
+      "Cache-Control": `public, max-age=${OIDC_CACHE_MAX_AGE_SECONDS}`,
+      ...CORS_HEADERS
     },
     body: JSON.stringify(discoveryDoc)
   };
@@ -165,6 +206,17 @@ app.http("oidc-discovery", {
   authLevel: "anonymous",
   route: ".well-known/openid-configuration",
   handler: oidcDiscoveryHandler
+});
+
+// CORS preflight for the OIDC discovery endpoint.
+app.http("oidc-discovery-options", {
+  methods: ["OPTIONS"],
+  authLevel: "anonymous",
+  route: ".well-known/openid-configuration",
+  handler: async (): Promise<HttpResponseInit> => ({
+    status: 204,
+    headers: CORS_HEADERS
+  })
 });
 
 // ---------------------------------------------------------------------------
@@ -180,7 +232,7 @@ async function oauthRegisterHandler(
   if (!clientId || !clientSecret) {
     return {
       status: 404,
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...CORS_HEADERS },
       body: JSON.stringify({
         error: "invalid_client_metadata",
         error_description:
@@ -207,7 +259,8 @@ async function oauthRegisterHandler(
         status: 401,
         headers: {
           "Content-Type": "application/json",
-          "WWW-Authenticate": 'Bearer realm="oauth-register"'
+          "WWW-Authenticate": 'Bearer realm="oauth-register"',
+          ...CORS_HEADERS
         },
         body: JSON.stringify({
           error: "unauthorized",
@@ -235,7 +288,7 @@ async function oauthRegisterHandler(
 
   return {
     status: 201,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...CORS_HEADERS },
     body: JSON.stringify(registrationResponse)
   };
 }
@@ -245,4 +298,15 @@ app.http("oauth-register", {
   authLevel: "anonymous",
   route: "oauth/register",
   handler: oauthRegisterHandler
+});
+
+// CORS preflight for the DCR endpoint.
+app.http("oauth-register-options", {
+  methods: ["OPTIONS"],
+  authLevel: "anonymous",
+  route: "oauth/register",
+  handler: async (): Promise<HttpResponseInit> => ({
+    status: 204,
+    headers: CORS_HEADERS
+  })
 });

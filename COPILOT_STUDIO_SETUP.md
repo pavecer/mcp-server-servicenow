@@ -10,11 +10,11 @@ This error occurs when Copilot Studio cannot access or parse the OIDC discovery 
 
 - [ ] **Verify Entra app registration exists**
   ```
-  ENTRA_TENANT_ID: 1938ee32-a258-454c-b8db-3a928341bd69
-  ENTRA_CLIENT_ID: 44b3a088-05e3-4fcc-9216-d1b117ed489a
+  ENTRA_TENANT_ID: <your-primary-tenant-guid>
+  ENTRA_CLIENT_ID: <your-app-registration-client-id>
   ```
   Go to [Azure Portal](https://portal.azure.com) → Entra ID → App registrations
-  - Search for client ID `44b3a088-05e3-4fcc-9216-d1b117ed489a`
+  - Search for your client ID
   - Verify app exists and is **Active**
 
 - [ ] **Redirect URI configured**
@@ -23,25 +23,25 @@ This error occurs when Copilot Studio cannot access or parse the OIDC discovery 
   - Implicit grant: **Enable ID tokens** and **Access tokens**
 
 - [ ] **API scope exposed**
-  - Expose an API → Application ID URI = `api://44b3a088-05e3-4fcc-9216-d1b117ed489a`
+  - Expose an API → Application ID URI = `api://<your-client-id>`
   - Add scope: `access_as_user` (scope name)
 
 - [ ] **Client secret is valid**
   - Certificates & secrets → Client secrets
-  - Verify secret `9Ct8Q~tKniqm3_Z3CSpiOJozczbJQLPXmgJJQcLU` exists and hasn't expired
+  - Verify secret exists and hasn't expired
 
 #### 2. **OIDC Endpoint Accessibility**
 
 - [ ] **Test OIDC discovery endpoint directly**
   ```
-  https://func-sp2iostp7h6vq.azurewebsites.net/.well-known/openid-configuration
+  https://<your-function-app>.azurewebsites.net/.well-known/openid-configuration
   ```
   - Should return HTTP 200 with JSON body
   - Must include: `issuer`, `authorization_endpoint`, `token_endpoint`
   - If using DCR (Dynamic Client Registration): must include `registration_endpoint`
 
 - [ ] **Check function app logs**
-  - Azure Portal → Function App `func-sp2iostp7h6vq`
+  - Azure Portal → Function App
   - Go to Monitor → Logs
   - Query for errors from the oidc-discovery function
   - Look for timeout errors when fetching Microsoft metadata
@@ -57,14 +57,23 @@ This error occurs when Copilot Studio cannot access or parse the OIDC discovery 
 #### 3. **Copilot Studio Configuration**
 
 - [ ] **Use the correct MCP URL**
-  - Server URL: `https://func-sp2iostp7h6vq.azurewebsites.net/mcp`
+  - Server URL: `https://<your-function-app>.azurewebsites.net/mcp`
   - Authentication: `OAuth 2.0`
   - Type: `Dynamic discovery`
-  - **NOT** `https://func-sp2iostp7h6vq.azurewebsites.net/api/...`
+  - **NOT** `https://<your-function-app>.azurewebsites.net/api/...`
 
-- [ ] **Ensure correct tenant context**
-  - Sign in to Copilot Studio with an account in tenant `1938ee32-a258-454c-b8db-3a928341bd69`
-  - When creating connection, authenticate with the same tenant
+- [ ] **Cross-tenant scenario**
+  - If Copilot Studio runs in a **different** Entra tenant than the Function App, ensure
+    your Entra app registration is set to **multi-tenant** (Accounts in any organizational
+    directory) and the environment variables below are configured:
+    ```
+    # Allow tokens from Copilot Studio's tenant (Option 1 – explicit list):
+    ENTRA_TRUSTED_TENANT_IDS="<copilot-studio-tenant-guid>"
+
+    # Or accept any Microsoft tenant (Option 2 – open):
+    ENTRA_ALLOW_ANY_TENANT="true"
+    ```
+  - See [CROSS_TENANT_OAUTH_SETUP.md](CROSS_TENANT_OAUTH_SETUP.md) for the full guide.
 
 #### 4. **Network & Firewall**
 
@@ -81,7 +90,7 @@ This error occurs when Copilot Studio cannot access or parse the OIDC discovery 
 
 1. Go to [Azure Portal](https://portal.azure.com)
 2. Search for "App registrations"
-3. Search for application ID `44b3a088-05e3-4fcc-9216-d1b117ed489a`
+3. Search for your application ID
 4. If **not found** → Need to create the Entra app first (see below)
 5. If **found** → Proceed to Step 2
 
@@ -99,7 +108,7 @@ This error occurs when Copilot Studio cannot access or parse the OIDC discovery 
 ### Step 3: Expose API
 
 1. In app registration → **Expose an API**
-2. Application ID URI: Set to `api://44b3a088-05e3-4fcc-9216-d1b117ed489a`
+2. Application ID URI: Set to `api://<your-client-id>`
 3. Scopes: Add `access_as_user`
    - Scope name: `access_as_user`
    - Admin consent: `Access ServiceNow MCP as user`
@@ -108,7 +117,6 @@ This error occurs when Copilot Studio cannot access or parse the OIDC discovery 
 ### Step 4: Redeploy Function App
 
 ```powershell
-cd c:\Users\pavelvecer\GitHub\mcp-server-servicenow
 npm run build
 azd deploy --environment dev
 ```
@@ -117,11 +125,11 @@ azd deploy --environment dev
 
 1. In Copilot Studio agent → **Tools > Add a tool > Model Context Protocol**
 2. Server name: `ServiceNow MCP`
-3. Server URL: `https://func-sp2iostp7h6vq.azurewebsites.net/mcp`
+3. Server URL: `https://<your-function-app>.azurewebsites.net/mcp`
 4. Authentication: `OAuth 2.0`
 5. Type: `Dynamic discovery`
 6. Click **Create**
-7. When prompted to sign in → Use account from tenant `1938ee32-a258-454c-b8db-3a928341bd69`
+7. When prompted to sign in → Use an account that has access to the app registration
 
 ---
 
@@ -132,26 +140,26 @@ azd deploy --environment dev
 ```bash
 # SSH into function app and view logs
 az functionapp log config \
-  --resource-group rg-dev \
-  --name func-sp2iostp7h6vq \
+  --resource-group <your-resource-group> \
+  --name <your-function-app> \
   --application-logging true \
   --detailed-error-messages true
 
 # Stream logs
 az webapp log tail \
-  --resource-group rg-dev \
-  --name func-sp2iostp7h6vq
+  --resource-group <your-resource-group> \
+  --name <your-function-app>
 ```
 
 ### Check OIDC Endpoint Manually (from local machine)
 
 ```powershell
 $response = Invoke-WebRequest `
-  -Uri "https://func-sp2iostp7h6vq.azurewebsites.net/.well-known/openid-configuration" `
+  -Uri "https://<your-function-app>.azurewebsites.net/.well-known/openid-configuration" `
   -Method GET
 
 $response.StatusCode
-$response.Content | ConvertFrom-Json | ForEach-Object { $_ | Add-Member -NotePropertyName Keys -NotePropertyValue ($_ | Get-Member -MemberType NoteProperty | Select-Object -ExpandProperty Name); $_ } 
+$response.Content | ConvertFrom-Json
 ```
 
 ### Alternative: Use API Key Instead of OAuth
@@ -161,8 +169,8 @@ If DCR/OAuth continues failing, use API key authentication instead:
 1. Get function key:
 ```bash
 az functionapp function keys list \
-  --resource-group rg-dev \
-  --name func-sp2iostp7h6vq \
+  --resource-group <your-resource-group> \
+  --name <your-function-app> \
   --function-name mcp
 ```
 
@@ -174,13 +182,13 @@ az functionapp function keys list \
 
 ---
 
-## Summary of Your Setup
+## Summary of Required Environment Variables
 
-| Component | Value |
-|-----------|-------|
-| Tenant ID | `1938ee32-a258-454c-b8db-3a928341bd69` |
-| Entra Client ID | `44b3a088-05e3-4fcc-9216-d1b117ed489a` |
-| Function App | `func-sp2iostp7h6vq` |
-| MCP Endpoint | `https://func-sp2iostp7h6vq.azurewebsites.net/mcp` |
-| OIDC Discovery | `https://func-sp2iostp7h6vq.azurewebsites.net/.well-known/openid-configuration` |
-| ServiceNow Instance | `https://dev310193.service-now.com/` |
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `ENTRA_TENANT_ID` | Yes | Primary Entra tenant GUID where the app registration lives |
+| `ENTRA_CLIENT_ID` | Yes | App registration client (application) ID |
+| `ENTRA_CLIENT_SECRET` | For DCR | Client secret – enables Dynamic Client Registration in discovery doc |
+| `ENTRA_AUDIENCE` | No | Override expected token audience (defaults to `api://<client-id>`) |
+| `ENTRA_TRUSTED_TENANT_IDS` | Cross-tenant | Comma-separated remote tenant GUIDs to accept tokens from |
+| `ENTRA_ALLOW_ANY_TENANT` | Cross-tenant | Set `"true"` to accept tokens from any Microsoft tenant |
