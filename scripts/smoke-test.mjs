@@ -2,6 +2,7 @@
 
 const endpointBase = process.env.MCP_ENDPOINT_URL || "http://localhost:7071/mcp";
 const functionKey = process.env.FUNCTION_KEY || "";
+const entraBearerToken = process.env.ENTRA_BEARER_TOKEN || "";
 const searchQuery = process.env.SEARCH_QUERY || "laptop";
 const explicitItemSysId = process.env.ITEM_SYS_ID || "";
 const requestedFor = process.env.REQUESTED_FOR || "";
@@ -28,11 +29,17 @@ if (functionKey) {
 let nextId = 1;
 
 async function postJson(payload) {
+  const headers = {
+    "Content-Type": "application/json"
+  };
+
+  if (entraBearerToken) {
+    headers["Authorization"] = `Bearer ${entraBearerToken}`;
+  }
+
   const response = await fetch(endpointUrl, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
+    headers,
     body: JSON.stringify(payload)
   });
 

@@ -5,7 +5,13 @@ param(
   [string]$ServiceNowInstanceUrl,
   [string]$ServiceNowClientId,
   [string]$ServiceNowClientSecret,
+  [string]$ServiceNowUsername,
+  [string]$ServiceNowPassword,
   [string]$ServiceNowOAuthTokenPath = "/oauth_token.do",
+  [string]$EntraTenantId,
+  [string]$EntraClientId,
+  [string]$EntraClientSecret,
+  [string]$EntraAudience,
   [switch]$SkipSmokeTest
 )
 
@@ -129,6 +135,26 @@ try {
     azd env set SERVICENOW_CLIENT_ID $ServiceNowClientId
     azd env set SERVICENOW_CLIENT_SECRET $ServiceNowClientSecret
     azd env set SERVICENOW_OAUTH_TOKEN_PATH $ServiceNowOAuthTokenPath
+    if (-not [string]::IsNullOrWhiteSpace($ServiceNowUsername)) {
+      azd env set SERVICENOW_USERNAME $ServiceNowUsername
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ServiceNowPassword)) {
+      azd env set SERVICENOW_PASSWORD $ServiceNowPassword
+    }
+  }
+
+  if (-not [string]::IsNullOrWhiteSpace($EntraTenantId)) {
+    $EntraClientId   = Read-RequiredValue -Prompt "Enter Entra application (client) ID" -CurrentValue $EntraClientId
+    $EntraClientSecret = Read-SecretValue -Prompt "Enter Entra client secret" -CurrentValue $EntraClientSecret
+
+    Invoke-Checked -Description "Set Entra environment variables" -Script {
+      azd env set ENTRA_TENANT_ID $EntraTenantId
+      azd env set ENTRA_CLIENT_ID $EntraClientId
+      azd env set ENTRA_CLIENT_SECRET $EntraClientSecret
+      if (-not [string]::IsNullOrWhiteSpace($EntraAudience)) {
+        azd env set ENTRA_AUDIENCE $EntraAudience
+      }
+    }
   }
 
   Invoke-Checked -Description "Install npm dependencies" -Script {
@@ -164,10 +190,22 @@ try {
   Write-Host "MCP Endpoint URL : $endpointUrl"
   Write-Host "Function Key     : $defaultFunctionKey"
   Write-Host ""
-  Write-Host "Copilot Studio setup values:"
-  Write-Host "- MCP URL         = $endpointUrl"
-  Write-Host "- Header name     = x-functions-key"
-  Write-Host "- Header value    = $defaultFunctionKey"
+
+  if (-not [string]::IsNullOrWhiteSpace($EntraTenantId)) {
+    Write-Host "Copilot Studio setup (OAuth 2.0 - Dynamic discovery):"
+    Write-Host "- MCP URL         = $endpointUrl"
+    Write-Host "- Authentication  = OAuth 2.0"
+    Write-Host "- Type            = Dynamic discovery"
+    Write-Host ""
+    Write-Host "  The wizard reads /.well-known/openid-configuration automatically."
+    Write-Host "  Click 'Create' to register and complete the setup."
+  } else {
+    Write-Host "Copilot Studio setup (API key - Entra auth not configured):"
+    Write-Host "- MCP URL         = $endpointUrl"
+    Write-Host "- Authentication  = API key"
+    Write-Host "- Header name     = x-functions-key"
+    Write-Host "- Header value    = $defaultFunctionKey"
+  }
 
   if (-not $SkipSmokeTest.IsPresent) {
     Write-Host ""
