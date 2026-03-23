@@ -145,13 +145,23 @@ export async function validateEntraToken(
   // Validate standard claims.
   const nowSec = Math.floor(Date.now() / 1_000);
 
+  // Ensure exp is a finite number and present.
+  if (typeof payload.exp !== "number" || !Number.isFinite(payload.exp)) {
+    throw new Error("Invalid or missing exp claim");
+  }
+
   if (payload.exp < nowSec) {
     throw new Error("Token has expired");
   }
 
   // Allow up to 5-minute clock skew.
-  if (payload.nbf > nowSec + MAX_CLOCK_SKEW_SECONDS) {
-    throw new Error("Token not yet valid (nbf)");
+  if (payload.nbf !== undefined) {
+    if (typeof payload.nbf !== "number" || !Number.isFinite(payload.nbf)) {
+      throw new Error("Invalid nbf claim");
+    }
+    if (payload.nbf > nowSec + MAX_CLOCK_SKEW_SECONDS) {
+      throw new Error("Token not yet valid (nbf)");
+    }
   }
 
   // Issuer must be the expected Entra v2 endpoint.
