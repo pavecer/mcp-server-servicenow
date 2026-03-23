@@ -7,3 +7,5 @@ local.settings.json
 
 *.log
 coverage/
+
+justignore.txt
