@@ -24,31 +24,51 @@ It provides four MCP tools:
 - Azure Functions Core Tools v4
 - Azure Developer CLI (`azd`)
 - Azure CLI (`az`)
-- A ServiceNow OAuth application with:
-  - `client_id`
-  - `client_secret`
-  - token endpoint available at `/oauth_token.do` (or custom path)
+- A ServiceNow OAuth application registered in the **Application Registry** (see ServiceNow Setup below)
 
 ## ServiceNow Setup
 
 The MCP server depends on standard ServiceNow Service Catalog APIs. The Azure side only hosts the MCP endpoint; access to catalog items is ultimately determined by what the ServiceNow token is allowed to see and order.
 
-### 1. Create or identify the OAuth application in ServiceNow
+### 1. Create an OAuth application in the ServiceNow Application Registry
 
-You need an OAuth application that can issue access tokens for ServiceNow API calls.
+Navigate to **System OAuth > Application Registry** and create a new application:
 
-Minimum values required by this MCP server:
+- Select **Create an OAuth API endpoint for external clients**
+- Fill in:
+  - **Name**: give the application a descriptive name (for example `MCP Server`)
+  - **Client ID**: auto-generated; copy it after saving
+  - **Client Secret**: auto-generated; copy the value while it is displayed (or click **Generate** / the lock icon to reveal/reset it)
+  - **Redirect URL**: leave blank or set to a placeholder (not used by this flow)
+  - **Default Grant Type**: select **Password Credentials**
+  - **Active**: checked
 
-- ServiceNow instance URL, for example `https://your-instance.service-now.com`
-- OAuth client ID
-- OAuth client secret
-- Token endpoint path, usually `/oauth_token.do`
+Save the record. Copy the **Client ID** and **Client Secret** values.
+
+> **Why Password Credentials?**
+> ServiceNow's standard Application Registry supports the OAuth 2.0 **Password** grant (`grant_type=password`) out of the box.
+> The **Client Credentials** grant (`grant_type=client_credentials`) requires an additional system property
+> (`glide.oauth.inbound.client.credential.grant_type.enabled = true`) that must be manually created in System Properties —
+> this is not part of the standard App Registry UI and is why client-credentials-only setups commonly fail without extra configuration.
+
+### 2. Create or identify the integration user
+
+The Password grant requires a ServiceNow user account whose credentials the server will use to obtain tokens.
+
+Create a dedicated integration user (or reuse an existing service account):
+
+1. Navigate to **User Administration > Users** and create a new user.
+2. Set a strong, stable password.
+3. On the user record, assign the roles required for Service Catalog access (at minimum `catalog` or `itil`).
+4. Ensure the user is **Active** and not locked out.
+
+Note the **username** and **password** — these go into `SERVICENOW_USERNAME` and `SERVICENOW_PASSWORD`.
 
 The server supports two operating models:
 
-1. Application token fallback
-  - The MCP server uses the configured client ID and client secret to obtain a ServiceNow bearer token.
-  - Catalog visibility and ordering rights are based on the permissions of that ServiceNow application or integration user.
+1. Integration user authentication (Password grant)
+  - The MCP server uses `SERVICENOW_CLIENT_ID`, `SERVICENOW_CLIENT_SECRET`, `SERVICENOW_USERNAME`, and `SERVICENOW_PASSWORD` to obtain a ServiceNow bearer token.
+  - Catalog visibility and ordering rights are based on the integration user's permissions.
 2. Per-user token pass-through
   - The MCP caller sends `x-servicenow-access-token` with a ServiceNow user access token.
   - Catalog visibility and ordering rights are based on that ServiceNow user's permissions.
@@ -74,7 +94,7 @@ Make sure the effective user behind the token:
 - can submit requests for the selected catalog items
 - has access to any dependent catalog variables, reference data, and request records needed after submission
 
-If you use application token fallback, assign these rights to the integration user or service principal represented by the OAuth client.
+If you use the integration user identity, assign these rights to that ServiceNow user account.
 
 If you use per-user token pass-through, assign these rights to the real end users or their groups/roles in ServiceNow.
 
@@ -127,6 +147,9 @@ npm run build
 - `SERVICENOW_INSTANCE_URL`
 - `SERVICENOW_CLIENT_ID`
 - `SERVICENOW_CLIENT_SECRET`
+- `SERVICENOW_USERNAME` (integration user username)
+- `SERVICENOW_PASSWORD` (integration user password)
+- `SERVICENOW_OAUTH_GRANT_TYPE` (optional: `auto`, `password`, or `client_credentials`; default `auto`)
 - `SERVICENOW_OAUTH_CLIENT_AUTH_STYLE` (optional: `auto`, `request_body`, or `basic`)
 
 4. Run locally:
@@ -161,6 +184,8 @@ pwsh -File scripts/deploy-azure.ps1 \
   -ServiceNowInstanceUrl https://<instance>.service-now.com \
   -ServiceNowClientId <client-id> \
   -ServiceNowClientSecret <client-secret> \
+  -ServiceNowUsername <integration-user> \
+  -ServiceNowPassword <integration-user-password> \
   -ServiceNowOAuthTokenPath /oauth_token.do
 ```
 
@@ -192,7 +217,9 @@ azd env new <environment-name>
 azd env set SERVICENOW_INSTANCE_URL "https://<your-instance>.service-now.com"
 azd env set SERVICENOW_CLIENT_ID "<client-id>"
 azd env set SERVICENOW_CLIENT_SECRET "<client-secret>"
-azd env set SERVICENOW_OAUTH_CLIENT_AUTH_STYLE "auto"
+azd env set SERVICENOW_USERNAME "<integration-user>"
+azd env set SERVICENOW_PASSWORD "<integration-user-password>"
+azd env set SERVICENOW_OAUTH_GRANT_TYPE "auto"
 ```
 
 4. Provision and deploy:
@@ -245,7 +272,7 @@ Use `validate_servicenow_configuration` to verify that your filled ServiceNow co
 Default behavior:
 
 - Uses `x-servicenow-access-token` if present.
-- Otherwise validates configured `client_credentials` settings.
+- Otherwise validates configured integration user credentials (password grant).
 - Checks token/auth, catalog list access, and item detail access.
 - Skips `order_now` by default to avoid accidental request creation.
 
@@ -278,7 +305,7 @@ Optional explicit order permission probe (can create a request in ServiceNow):
 
 Interpretation tips:
 
-- `auth.client_credentials` failed: OAuth app settings (`instance`, `client_id`, `client_secret`, token path) are incorrect or token issuance is not allowed.
+- `auth.token` failed: OAuth app settings (`instance`, `client_id`, `client_secret`, `username`, `password`, token path) are incorrect or token issuance is not allowed.
 - `api.catalog.list` failed with `401/403`: identity is authenticated but lacks API or catalog rights.
 - `api.catalog.list` passed with `foundCount=0`: query mismatch or limited catalog visibility for the identity.
 - `api.catalog.order_now` warning: by default the order probe is skipped; set `probeOrderNow=true` only with a controlled test item.
@@ -329,7 +356,7 @@ Notes:
   - `get_catalog_item_form`
   - `place_order`
   - `validate_servicenow_configuration`
-1. (Optional) If you want ServiceNow calls to respect individual user permissions, configure your Copilot Studio integration layer to pass a ServiceNow user access token in the `x-servicenow-access-token` header for each MCP request. Without this header, the server uses app credentials.
+1. (Optional) If you want ServiceNow calls to respect individual user permissions, configure your Copilot Studio integration layer to pass a ServiceNow user access token in the `x-servicenow-access-token` header for each MCP request. Without this header, the server uses the configured integration user credentials.
 1. Run a prompt test flow:
   - Discover items with `search_catalog_items`.
   - Use returned `itemSysId` to call `get_catalog_item_form`.
@@ -368,9 +395,18 @@ Tip: If a broken connection already exists from a failed attempt, delete it and 
 
 - `401` from ServiceNow token endpoint:
   - Verify `SERVICENOW_CLIENT_ID` and `SERVICENOW_CLIENT_SECRET`.
-  - Confirm token path (`SERVICENOW_OAUTH_TOKEN_PATH`).
+  - Verify `SERVICENOW_USERNAME` and `SERVICENOW_PASSWORD` (required for the password grant).
+  - Confirm token path (`SERVICENOW_OAUTH_TOKEN_PATH`), usually `/oauth_token.do`.
+  - Ensure the integration user account is **active** and not locked in ServiceNow.
 - `401/403` calling MCP endpoint:
   - Verify function key is valid and passed correctly.
 - Empty catalog search results:
   - Adjust query text.
-  - Ensure your ServiceNow user (via x-servicenow-access-token header) or app credentials have access to the catalogs you're searching.
+  - Ensure your ServiceNow integration user (or the user behind `x-servicenow-access-token`) has catalog visibility.
+
+### Grant type reference
+
+| Grant type | When to use | Extra ServiceNow setup required |
+|---|---|---|
+| `password` (default when username/password are set) | Standard App Registry, works out of the box | None — just the App Registry record and an active integration user |
+| `client_credentials` | Machine-to-machine without a user account | Must manually create system property `glide.oauth.inbound.client.credential.grant_type.enabled = true` in **System Properties** |

@@ -6,6 +6,9 @@
     "SERVICENOW_INSTANCE_URL": "https://your-instance.service-now.com",
     "SERVICENOW_CLIENT_ID": "",
     "SERVICENOW_CLIENT_SECRET": "",
-    "SERVICENOW_OAUTH_TOKEN_PATH": "/oauth_token.do"
+    "SERVICENOW_USERNAME": "",
+    "SERVICENOW_PASSWORD": "",
+    "SERVICENOW_OAUTH_TOKEN_PATH": "/oauth_token.do",
+    "SERVICENOW_OAUTH_GRANT_TYPE": "auto"
   }
 }
