@@ -45,14 +45,33 @@ async function oidcDiscoveryHandler(
   // registration_endpoint URL is correct regardless of deployment host.
   const requestUrl = new URL(request.url);
   const serverBase = `${requestUrl.protocol}//${requestUrl.host}`;
-  const issuerBase = `https://login.microsoftonline.com/${tenantId}/v2.0`;
+  const issuerMetadataUrl = `https://login.microsoftonline.com/${tenantId}/v2.0/.well-known/openid-configuration`;
+
+  // Start with derived defaults, then prefer values from Microsoft's discovery document.
+  let issuerBase = `https://login.microsoftonline.com/${tenantId}/v2.0`;
+  let authorizationEndpoint = `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/authorize`;
+  let tokenEndpoint = `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`;
+  let jwksUri = `https://login.microsoftonline.com/${tenantId}/discovery/v2.0/keys`;
+
+  try {
+    const issuerResponse = await fetch(issuerMetadataUrl);
+    if (issuerResponse.ok) {
+      const issuerConfig = await issuerResponse.json();
+      issuerBase = issuerConfig.issuer ?? issuerBase;
+      authorizationEndpoint = issuerConfig.authorization_endpoint ?? authorizationEndpoint;
+      tokenEndpoint = issuerConfig.token_endpoint ?? tokenEndpoint;
+      jwksUri = issuerConfig.jwks_uri ?? jwksUri;
+    }
+  } catch {
+    // If the Microsoft discovery document cannot be fetched, fall back to the derived URLs above.
+  }
 
   const discoveryDoc = {
     issuer: issuerBase,
-    authorization_endpoint: `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/authorize`,
-    token_endpoint: `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`,
+    authorization_endpoint: authorizationEndpoint,
+    token_endpoint: tokenEndpoint,
     token_endpoint_auth_methods_supported: ["client_secret_post", "client_secret_basic"],
-    jwks_uri: `https://login.microsoftonline.com/${tenantId}/discovery/v2.0/keys`,
+    jwks_uri: jwksUri,
     userinfo_endpoint: "https://graph.microsoft.com/oidc/userinfo",
     // DCR endpoint: present only when the client secret is configured
     ...(config.entraAuth.clientSecret
