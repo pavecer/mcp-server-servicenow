@@ -356,11 +356,11 @@ Use this when `ENTRA_CLIENT_SECRET` is not set (you don't want the server to exp
 
 ---
 
-### Fallback B: API key (Entra not configured)
+### Fallback B: No Entra auth (anonymous endpoint)
 
-When `ENTRA_TENANT_ID` is not set, the MCP server does not enforce Entra auth and can be protected with an Azure Function key.
+When `ENTRA_TENANT_ID` is not set, the MCP server does not enforce Entra auth. The MCP HTTP trigger is configured with `authLevel: "anonymous"`, so Azure Functions keys (`x-functions-key`) are **not** validated by the platform in the default configuration.
 
-1. Use the MCP wizard with **Authentication → API key**.
+If you want to add key-based protection, change `authLevel` to `"function"` in `src/functions/mcp.ts` before deploying, then configure Copilot Studio with **Authentication → API key**:
 
    | Field | Value |
    |---|---|
@@ -368,7 +368,7 @@ When `ENTRA_TENANT_ID` is not set, the MCP server does not enforce Entra auth an
    | API key type | `Header` |
    | Header name | `x-functions-key` |
 
-2. Retrieve the function key:
+Retrieve the function key after deploying with `authLevel: "function"`:
 
 ```bash
 az functionapp function keys list \
@@ -376,8 +376,6 @@ az functionapp function keys list \
   --name <function-app-name> \
   --function-name servicenow-mcp
 ```
-
-3. Paste the key value when the wizard prompts for the API key.
 
 > **Note**: API key authentication is a shared secret and is not suitable for broadly shared tenant agents. Use Entra OAuth 2.0 for production deployments.
 
@@ -394,7 +392,7 @@ Use `validate_servicenow_configuration` to verify that OAuth token acquisition a
 Default behavior:
 
 - Uses `x-servicenow-access-token` if present.
-- Otherwise validates configured integration user credentials (password grant).
+- Otherwise validates configured ServiceNow integration user credentials (resource owner password credentials grant when `SERVICENOW_USERNAME`/`PASSWORD` are set; falls back to `client_credentials`).
 - Checks token/auth, catalog list access, and item detail access.
 - Skips `order_now` by default to avoid accidental request creation.
 
@@ -405,7 +403,6 @@ Recommended first validation call:
   "name": "validate_servicenow_configuration",
   "arguments": {
     "query": "laptop",
-    "forceClientCredentials": true,
     "probeOrderNow": false
   }
 }
@@ -430,18 +427,25 @@ Optional explicit order permission probe:
 Run end-to-end smoke test against local or deployed MCP endpoint:
 
 ```bash
-# Local (ENTRA_AUTH_DISABLED=true must be set in local.settings.json)
+# Local — ENTRA_AUTH_DISABLED=true must be set in local.settings.json
 set MCP_ENDPOINT_URL=http://localhost:7071/mcp
 npm run smoke:test
 
-# Deployed (no function key required when Entra auth is configured)
+# Deployed with Entra auth enabled — obtain a token first and pass it
 set MCP_ENDPOINT_URL=https://<function-app-host>/mcp
+set ENTRA_BEARER_TOKEN=<entra-access-token>
 set SEARCH_QUERY=laptop
 set ORDER_VARIABLES_JSON={}
 npm run smoke:test
 ```
 
-Optional variables: `ITEM_SYS_ID`, `REQUESTED_FOR`
+To obtain `ENTRA_BEARER_TOKEN` for a deployed smoke test, use the Azure CLI:
+
+```bash
+az account get-access-token --resource api://<ENTRA_CLIENT_ID> --query accessToken -o tsv
+```
+
+Optional variables: `ITEM_SYS_ID`, `REQUESTED_FOR`, `FUNCTION_KEY`
 
 > `place_order` may fail if required item variables are missing; set `ORDER_VARIABLES_JSON` to valid form values.
 
