@@ -9,3 +9,4 @@ local.settings.json
 coverage/
 
 justignore.txt
+logs/
