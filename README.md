@@ -127,6 +127,7 @@ npm run build
 - `SERVICENOW_INSTANCE_URL`
 - `SERVICENOW_CLIENT_ID`
 - `SERVICENOW_CLIENT_SECRET`
+- `SERVICENOW_OAUTH_CLIENT_AUTH_STYLE` (optional: `auto`, `request_body`, or `basic`)
 
 4. Run locally:
 
@@ -191,6 +192,7 @@ azd env new <environment-name>
 azd env set SERVICENOW_INSTANCE_URL "https://<your-instance>.service-now.com"
 azd env set SERVICENOW_CLIENT_ID "<client-id>"
 azd env set SERVICENOW_CLIENT_SECRET "<client-secret>"
+azd env set SERVICENOW_OAUTH_CLIENT_AUTH_STYLE "auto"
 ```
 
 4. Provision and deploy:
