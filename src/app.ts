@@ -1,7 +1,8 @@
 import express, { Request, Response } from "express";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { registerTools } from "./tools/index";
+import { ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { getMinimalToolDefinitions, registerTools } from "./tools/index";
 import { runWithRequestContext } from "./requestContext";
 
 /**
@@ -15,6 +16,16 @@ import { runWithRequestContext } from "./requestContext";
 export function createMcpExpressApp(): express.Express {
   const expressApp = express();
   expressApp.use(express.json());
+
+  const setMcpHttpHeaders = (res: Response): void => {
+    res.setHeader("Allow", "GET, POST, DELETE, OPTIONS");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      "accept, content-type, mcp-protocol-version, mcp-session-id, last-event-id, authorization, x-functions-key"
+    );
+    res.setHeader("Access-Control-Expose-Headers", "mcp-session-id");
+  };
 
   const normalizeAcceptHeader = (req: Request): void => {
     const current = req.headers.accept;
@@ -47,6 +58,28 @@ export function createMcpExpressApp(): express.Express {
     res.json({ status: "ok", server: "servicenow-mcp" });
   });
 
+  expressApp.use((req: Request, res: Response, next) => {
+    setMcpHttpHeaders(res);
+
+    if (req.method === "OPTIONS") {
+      res.status(204).end();
+      return;
+    }
+
+    if (req.method === "GET") {
+      res.setHeader("Content-Type", "text/event-stream");
+      res.status(200).send(": mcp endpoint ready\n\n");
+      return;
+    }
+
+    if (req.method === "DELETE") {
+      res.status(204).end();
+      return;
+    }
+
+    next();
+  });
+
     // Serve MCP over Streamable HTTP transport (stateless mode)
     // Use app.use as Express 5-compatible catch-all route.
     expressApp.use(async (req: Request, res: Response): Promise<void> => {
@@ -57,9 +90,19 @@ export function createMcpExpressApp(): express.Express {
 
     registerTools(server);
 
+    // Copilot Studio currently appears sensitive to extra MCP SDK fields such as
+    // execution metadata and some richer JSON Schema keywords. Override tools/list
+    // with a minimal manifest while leaving tool execution on the SDK path.
+    server.server.setRequestHandler(ListToolsRequestSchema, () => ({
+      tools: getMinimalToolDefinitions()
+    }));
+
     const transport = new StreamableHTTPServerTransport({
       // stateless mode: no session affinity required
-      sessionIdGenerator: undefined
+      sessionIdGenerator: undefined,
+      // Some clients fail to parse SSE-wrapped JSON-RPC responses during discovery.
+      // Force JSON responses for compatibility while keeping Streamable HTTP semantics.
+      enableJsonResponse: true
     });
 
     try {
