@@ -16,6 +16,32 @@ export function createMcpExpressApp(): express.Express {
   const expressApp = express();
   expressApp.use(express.json());
 
+  const normalizeAcceptHeader = (req: Request): void => {
+    const current = req.headers.accept;
+    const normalized = Array.isArray(current) ? current.join(",") : (current || "");
+    const acceptsJson = normalized.includes("application/json") || normalized.includes("*/*");
+    const acceptsSse = normalized.includes("text/event-stream") || normalized.includes("*/*");
+
+    if (!acceptsJson || !acceptsSse) {
+      (req.headers as Record<string, string | string[] | undefined>).accept = "application/json, text/event-stream";
+    }
+  };
+
+  const ensureRawHeaders = (req: Request): void => {
+    const pairs: string[] = [];
+    for (const [key, value] of Object.entries(req.headers)) {
+      if (Array.isArray(value)) {
+        for (const entry of value) {
+          pairs.push(key, String(entry));
+        }
+      } else if (typeof value !== "undefined") {
+        pairs.push(key, String(value));
+      }
+    }
+
+    (req as unknown as { rawHeaders?: string[] }).rawHeaders = pairs;
+  };
+
   // Health / readiness probe used by Azure to verify the function is up
   expressApp.get("/health", (_req: Request, res: Response) => {
     res.json({ status: "ok", server: "servicenow-mcp" });
@@ -46,6 +72,8 @@ export function createMcpExpressApp(): express.Express {
           serviceNowAccessToken
         },
         async () => {
+          normalizeAcceptHeader(req);
+          ensureRawHeaders(req);
           await transport.handleRequest(req, res, req.body);
         }
       );

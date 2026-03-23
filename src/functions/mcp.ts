@@ -19,6 +19,14 @@ const handler = serverlessHttp(createMcpExpressApp(), {
 async function toMutableAzureRequest(request: HttpRequest): Promise<Record<string, unknown>> {
   const requestUrl = new URL(request.url);
   const headers = Object.fromEntries(request.headers.entries());
+  const normalizedAccept = String(headers.accept || "");
+  const acceptsJson = normalizedAccept.includes("application/json") || normalizedAccept.includes("*/*");
+  const acceptsSse = normalizedAccept.includes("text/event-stream") || normalizedAccept.includes("*/*");
+
+  if (!acceptsJson || !acceptsSse) {
+    headers.accept = "application/json, text/event-stream";
+  }
+
   const query = Object.fromEntries(requestUrl.searchParams.entries());
 
   return {
