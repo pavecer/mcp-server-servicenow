@@ -4,6 +4,8 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { getMinimalToolDefinitions, registerTools } from "./tools/index";
 import { runWithRequestContext } from "./requestContext";
+import { config } from "./config";
+import { validateEntraToken, buildAcceptedAudiences } from "./services/entraTokenValidator";
 
 /**
  * Creates and returns the Express application that hosts the MCP server.
@@ -58,6 +60,56 @@ export function createMcpExpressApp(): express.Express {
     res.json({ status: "ok", server: "servicenow-mcp" });
   });
 
+  // ---------------------------------------------------------------------------
+  // Entra ID Bearer token validation
+  // ---------------------------------------------------------------------------
+  // When ENTRA_TENANT_ID and ENTRA_CLIENT_ID are configured (and
+  // ENTRA_AUTH_DISABLED is not true), every POST to the MCP endpoint must carry
+  // a valid Entra access token in the Authorization: Bearer header.
+  // Validated caller identity is forwarded through RequestContext so tools can
+  // log or use it.  The ServiceNow service account is still used for API calls
+  // unless the caller also supplies x-servicenow-access-token.
+  expressApp.use(async (req: Request, res: Response, next) => {
+    const entra = config.entraAuth;
+
+    // Skip when Entra auth is disabled or not configured.
+    if (entra.disabled || !entra.tenantId || !entra.clientId) {
+      next();
+      return;
+    }
+
+    // Skip non-tool requests (OPTIONS, etc.) — the downstream middleware handles
+    // those before any MCP work begins.
+    if (req.method === "OPTIONS") {
+      next();
+      return;
+    }
+
+    const authHeader = req.header("Authorization") || req.header("authorization") || "";
+    if (!authHeader.startsWith("Bearer ")) {
+      res.status(401).json({
+        error: "unauthorized",
+        error_description: "A valid Entra ID Bearer token is required. Configure OAuth 2.0 in Copilot Studio to obtain one automatically."
+      });
+      return;
+    }
+
+    const token = authHeader.slice(7);
+    const acceptedAudiences = buildAcceptedAudiences(entra.clientId, entra.audience ?? undefined);
+
+    try {
+      const payload = await validateEntraToken(token, entra.tenantId, acceptedAudiences);
+      res.locals.callerEntraObjectId = payload.oid;
+      res.locals.callerUpn = payload.preferred_username || payload.upn;
+      next();
+    } catch (err) {
+      res.status(401).json({
+        error: "unauthorized",
+        error_description: `Bearer token validation failed: ${err instanceof Error ? err.message : "unknown error"}`
+      });
+    }
+  });
+
   expressApp.use((req: Request, res: Response, next) => {
     setMcpHttpHeaders(res);
 
@@ -109,10 +161,14 @@ export function createMcpExpressApp(): express.Express {
       await server.connect(transport);
       // Pass the parsed JSON body so the transport doesn't need to re-read the stream
       const serviceNowAccessToken = req.header("x-servicenow-access-token") || undefined;
+      const callerEntraObjectId = (res.locals.callerEntraObjectId as string | undefined);
+      const callerUpn = (res.locals.callerUpn as string | undefined);
 
       await runWithRequestContext(
         {
-          serviceNowAccessToken
+          serviceNowAccessToken,
+          callerEntraObjectId,
+          callerUpn
         },
         async () => {
           normalizeAcceptHeader(req);
