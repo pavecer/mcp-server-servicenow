@@ -356,10 +356,11 @@ Use this when `ENTRA_CLIENT_SECRET` is not set (you don't want the server to exp
 
 ---
 
-### Fallback B: API key (Entra not configured)
+### Fallback B: No Entra auth (optional Azure Function key)
 
-When `ENTRA_TENANT_ID` is not set, the MCP server does not enforce Entra auth and can be protected with an Azure Function key.
+When `ENTRA_TENANT_ID` is not set, the MCP server does not enforce Entra auth. In the default sample, the MCP HTTP trigger is configured with `authLevel: "anonymous"`, so Azure Functions keys (including `x-functions-key`) are **not** required or validated by the platform.
 
+If you want to protect the endpoint with an Azure Function key, first change the function auth configuration (for example, to `authLevel: "function"` in `src/functions/mcp.ts`) so that Azure Functions enforces keys. After you have done that, configure Copilot Studio as follows:
 1. Use the MCP wizard with **Authentication → API key**.
 
    | Field | Value |
