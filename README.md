@@ -307,24 +307,55 @@ Notes:
 ## Add to Microsoft Copilot Studio
 
 1. In Copilot Studio, add a new MCP server integration.
-2. In the MCP onboarding wizard:
-  - **Server name**: ServiceNow MCP
-  - **Server description**: MCP server for ServiceNow catalog search, order form retrieval, and order placement
-  - **Server URL**: `https://<function-app-host>/mcp`
-  - **Authentication type**: API key (Header)
-    - **Header name**: `x-functions-key`
-    - **Header value**: `<function-key>` (retrieved from Azure)
-3. Save and allow Copilot Studio to discover tools automatically.
-4. Verify all tools are visible:
-   - `search_catalog_items`
-   - `get_catalog_item_form`
-   - `place_order`
-5. (Optional) If you want ServiceNow calls to respect individual user permissions, configure your Copilot Studio integration layer to pass a ServiceNow user access token in the `x-servicenow-access-token` header for each MCP request. Without this header, the server uses app credentials (service principal).
-6. Run a prompt test flow:
-   - Discover items with `search_catalog_items` — the response contains a `selectionAdaptiveCard` that renders each result as a tappable container; the user taps to select, which returns `{ action: "select_catalog_item", itemSysId, itemName }`.
-   - Use the returned `itemSysId` to call `get_catalog_item_form` — the response contains an `adaptiveCard` with all required and optional input fields.
-   - The user fills in the Adaptive Card form and submits; the submission returns field values keyed by variable name.
-   - Call `place_order` with the collected variable values to submit the request — the response contains an `adaptiveCard` with the request number, status, and a link to ServiceNow.
+1. In the MCP onboarding wizard, set the fields exactly as follows:
+
+| Field | Value |
+| --- | --- |
+| Server name | `ServiceNow MCP` |
+| Server description | `MCP server for ServiceNow catalog search, order form retrieval, and order placement` |
+| Server URL | `https://<function-app-host>/mcp` |
+| Authentication | `API key` |
+| API key type | `Header` |
+| Header name | `x-functions-key` |
+
+1. If the wizard asks for an API key parameter label, set:
+  - Parameter label: `Function Key`
+  - Parameter name: `x-functions-key`
+  - Parameter location: `Header`
+1. Create the connection and paste the function key value (`<function-key>`) when prompted.
+1. Save and allow Copilot Studio to discover tools automatically.
+1. Verify all tools are visible:
+  - `search_catalog_items`
+  - `get_catalog_item_form`
+  - `place_order`
+  - `validate_servicenow_configuration`
+1. (Optional) If you want ServiceNow calls to respect individual user permissions, configure your Copilot Studio integration layer to pass a ServiceNow user access token in the `x-servicenow-access-token` header for each MCP request. Without this header, the server uses app credentials.
+1. Run a prompt test flow:
+  - Discover items with `search_catalog_items`.
+  - Use returned `itemSysId` to call `get_catalog_item_form`.
+  - Submit the form values with `place_order`.
+
+If you previously got `Not Acceptable: Client must accept both application/json and text/event-stream`, redeploy latest code from this repository and recreate the MCP connection.
+
+### Known Copilot Studio Wizard Issue (Missing API Key Label)
+
+Some tenants show a bug where the MCP wizard creates the connector with an empty API key parameter label.
+When this happens, creating a connection can fail or show a blank required field.
+
+Workaround:
+
+1. Open the generated custom connector for your MCP server.
+1. Go to **Security**.
+1. Ensure these values are set:
+  - **Authentication type**: `API Key`
+  - **Parameter label**: `API Key value` (or `Function Key`)
+  - **Parameter name**: `x-functions-key`
+  - **Parameter location**: `Header`
+1. Save / Update the connector.
+1. Return to your agent tool configuration and create a new connection.
+1. Paste your Function App key as the API key value.
+
+Tip: If a broken connection already exists from a failed attempt, delete it and create a new one after updating the connector security settings.
 
 ## Security and Operations Notes
 
