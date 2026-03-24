@@ -150,7 +150,7 @@ This app registration is the OAuth 2.0 identity used by Copilot Studio to authen
    - ✅ **ID tokens**
 4. Click **Save**.
 
-> **Note on connector-specific redirect URIs**: The URI ending in `635855ea92fead22` is the published connector identifier for this repository. Power Platform may send this exact URI, or a different connector-specific URI, during the first OAuth flow. If login fails with a redirect URI mismatch error (`AADSTS50011`), inspect the `authorize` request in your browser's Network tab to find the exact `redirect_uri` parameter being used, then register that URI in the app registration. See the [Redirect URI mismatch troubleshooting entry](#-redirect-uri-mismatch-aadsts50011-during-entra-login) for details.
+> **Note on connector-specific redirect URIs**: The URI ending in `635855ea92fead22` is the published connector identifier for this repository. Power Platform may send this exact URI, or a different connector-specific URI, during the first OAuth flow. If login fails with a redirect URI mismatch error (`AADSTS50011`), inspect the `authorize` request in your browser's Network tab to find the exact `redirect_uri` parameter being used, then register that URI in the app registration. See the [Redirect URI mismatch troubleshooting entry](#redirect-uri-mismatch-aadsts50011-during-entra-login) for details.
 
 #### Step 5 — Set token version to v2
 
