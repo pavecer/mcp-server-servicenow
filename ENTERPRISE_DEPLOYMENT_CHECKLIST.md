@@ -808,20 +808,10 @@ End-to-End Test
 2. Re-run `azd up`.
 3. Verify the app settings are populated:
    ```powershell
-   az functionapp config appsettings list \
-     --resource-group <RG> --name <FUNC> \
-     --query "[?starts_with(name,'ENTRA_')].[name,value]" \
+   az functionapp config appsettings list `
+     --resource-group <RG> --name <FUNC> `
+     --query "[?starts_with(name,'ENTRA_')].[name,value]" `
      --output table
-   ```
-
-**Emergency runtime patch** (if re-deployment is not possible immediately):
-```powershell
-az functionapp config appsettings set \
-  --resource-group <RG> --name <FUNC> \
-  --settings \
-    ENTRA_TENANT_ID="<ENTRA_TENANT_ID>" \
-    ENTRA_CLIENT_ID="<ENTRA_CLIENT_ID>" \
-    ENTRA_CLIENT_SECRET="<ENTRA_CLIENT_SECRET>" \
     ENTRA_AUDIENCE="api://<ENTRA_CLIENT_ID>"
 ```
 
