@@ -780,13 +780,13 @@ End-to-End Test
    $principalId = (az functionapp show -g <RG> -n <FUNC> --query "identity.principalId" -o tsv)
 
    # Storage Blob Data Owner
-   az role assignment create --assignee $principalId \
-     --role "ba92f5b4-2d11-453d-a403-e96b0029c9fe" \
+   az role assignment create --assignee $principalId `
+     --role "ba92f5b4-2d11-453d-a403-e96b0029c9fe" `
      --scope "/subscriptions/<SUB>/resourceGroups/<RG>/providers/Microsoft.Storage/storageAccounts/<ST>"
 
    # Key Vault Secrets User
-   az role assignment create --assignee $principalId \
-     --role "4633458b-17de-408a-b874-0445c86b69e6" \
+   az role assignment create --assignee $principalId `
+     --role "4633458b-17de-408a-b874-0445c86b69e6" `
      --scope "/subscriptions/<SUB>/resourceGroups/<RG>/providers/Microsoft.KeyVault/vaults/<KV>"
    ```
 3. Re-run `azd up`.
