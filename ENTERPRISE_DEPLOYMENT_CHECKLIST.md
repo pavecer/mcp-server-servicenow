@@ -988,8 +988,8 @@ azd up --no-prompt
    ```
    Or patch immediately:
    ```powershell
-   az functionapp config appsettings set \
-     --resource-group <RG> --name <FUNC> \
+   az functionapp config appsettings set `
+     --resource-group <RG> --name <FUNC> `
      --settings ENTRA_TRUSTED_TENANT_IDS="<REMOTE_TENANT_ID>"
    ```
 
