@@ -318,7 +318,7 @@ az functionapp function list `
   --output table
 ```
 
-Expected function names: `mcp`, `oidc-discovery` (or similar — the important thing is that the routes `/mcp` and `/.well-known/openid-configuration` are accessible at the next step).
+Expected function names: `servicenow-mcp`, `oidc-discovery` (or similar — the important thing is that the routes `/mcp` and `/.well-known/openid-configuration` are accessible at the next step).
 
 #### Step 2 — Verify Entra environment variables are populated
 
