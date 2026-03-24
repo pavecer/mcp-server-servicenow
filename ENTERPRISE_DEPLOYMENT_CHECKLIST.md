@@ -369,7 +369,7 @@ $response.Headers["WWW-Authenticate"]         # must contain resource_metadata=
 $env:MCP_ENDPOINT_URL = (azd env get-value MCP_ENDPOINT_URL).Trim()
 $env:FUNCTION_KEY     = (az functionapp function keys list `
   --resource-group $rg --name $func `
-  --function-name mcp --output json | ConvertFrom-Json).default
+  --function-name servicenow-mcp --output json | ConvertFrom-Json).default
 $env:SEARCH_QUERY     = "laptop"
 
 node scripts/smoke-test.mjs
