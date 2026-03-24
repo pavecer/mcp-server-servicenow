@@ -110,6 +110,18 @@ Upon finishing testing, ensure all processes are properly shut down to prevent r
 - **Authentication**: Proper managed identity and RBAC configuration
 - **Monitoring**: Application Insights receiving telemetry
 
+## Repo-Specific Notes For This MCP Server
+
+- This repo exposes the MCP endpoint at `/mcp` and OAuth discovery endpoints at `/.well-known/openid-configuration`, `/.well-known/oauth-authorization-server`, and `/.well-known/oauth-protected-resource`.
+- For MCP OAuth compatibility, unauthenticated `POST /mcp` responses must include `WWW-Authenticate: Bearer ... resource_metadata="https://<host>/.well-known/oauth-protected-resource"`.
+- Copilot Studio / Power Platform caches OAuth server metadata when the connector is created. If OAuth endpoints or redirect URIs change later, the connection must be deleted and recreated.
+- For this repo's current Copilot Studio setup, the Entra app registration must include these redirect URIs:
+  - `https://oauth.botframework.com/callback`
+  - `https://global.consent.azure-apim.net/redirect`
+  - `https://global.consent.azure-apim.net/redirect/cr7a3-5fservicenow-20mcp-5f635855ea92fead22`
+  - `https://copilotstudio.preview.microsoft.com/connection/oauth/redirect`
+- If Copilot Studio popup closes instantly and no Entra sign-in is logged, inspect App Insights for calls to `/.well-known/openid-configuration` and `/oauth/register`. If none occur, the connector likely has stale OAuth metadata and must be recreated.
+
 ## Failure Recovery & Troubleshooting
 
 ### Common Issues & Solutions

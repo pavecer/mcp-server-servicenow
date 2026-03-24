@@ -129,9 +129,10 @@ async function oidcDiscoveryHandler(
   // accept tokens from any tenant while still validating the iss claim in each
   // individual token.  Without this, a token issued to a user in Tenant B carries
   // an iss that doesn't match the Tenant A issuer in the discovery doc.
-  const isCrossTenant =
-    config.entraAuth.allowAnyTenant ||
-    (config.entraAuth.trustedTenantIds?.length ?? 0) > 0;
+  const trustedRemoteTenantIds = (config.entraAuth.trustedTenantIds ?? []).filter(
+    tid => Boolean(tid) && tid !== tenantId
+  );
+  const isCrossTenant = config.entraAuth.allowAnyTenant || trustedRemoteTenantIds.length > 0;
 
   // Fetch real endpoint URLs from Microsoft so values are always accurate.
   // In cross-tenant mode use the /common endpoint so all fields are consistent.
@@ -219,6 +220,88 @@ app.http("oidc-discovery-options", {
   })
 });
 
+  // ---------------------------------------------------------------------------
+  // /.well-known/oauth-authorization-server  — RFC 8414 alias
+  // ---------------------------------------------------------------------------
+  // Some MCP clients (including Copilot Studio) try this path before the
+  // OIDC well-known path.  Serve the same discovery document for compatibility.
+  app.http("oauth-authorization-server", {
+    methods: ["GET"],
+    authLevel: "anonymous",
+    route: ".well-known/oauth-authorization-server",
+    handler: oidcDiscoveryHandler
+  });
+
+  app.http("oauth-authorization-server-options", {
+    methods: ["OPTIONS"],
+    authLevel: "anonymous",
+    route: ".well-known/oauth-authorization-server",
+    handler: async (): Promise<HttpResponseInit> => ({
+      status: 204,
+      headers: CORS_HEADERS
+    })
+  });
+
+  // ---------------------------------------------------------------------------
+  // /.well-known/oauth-protected-resource  — RFC 9728
+  // ---------------------------------------------------------------------------
+  // OAuth 2.0 Protected Resource Metadata document.  MCP clients use this to
+  // locate the authorization server for this resource (the MCP server).
+  // Reference: https://datatracker.ietf.org/doc/rfc9728/
+  async function oauthProtectedResourceHandler(
+    request: HttpRequest,
+    _context: InvocationContext
+  ): Promise<HttpResponseInit> {
+    const { tenantId, clientId } = config.entraAuth;
+
+    if (!tenantId || !clientId) {
+      return {
+        status: 404,
+        headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+        body: JSON.stringify({ error: "Entra ID is not configured on this server" })
+      };
+    }
+
+    const requestUrl = new URL(request.url);
+    const serverBase = `${requestUrl.protocol}//${requestUrl.host}`;
+    const mcpResourceUrl = `${serverBase}/mcp`;
+
+    const metadata = {
+      resource: mcpResourceUrl,
+      authorization_servers: [serverBase],
+      bearer_methods_supported: ["header"],
+      scopes_supported: [`api://${clientId}/access_as_user`, "openid", "profile", "email", "offline_access"],
+      resource_documentation: `${serverBase}/.well-known/openid-configuration`
+    };
+
+    return {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json",
+        "Cache-Control": `public, max-age=${OIDC_CACHE_MAX_AGE_SECONDS}`,
+        ...CORS_HEADERS
+      },
+      body: JSON.stringify(metadata)
+    };
+  }
+
+  app.http("oauth-protected-resource", {
+    methods: ["GET"],
+    authLevel: "anonymous",
+    route: ".well-known/oauth-protected-resource",
+    handler: oauthProtectedResourceHandler
+  });
+
+  app.http("oauth-protected-resource-options", {
+    methods: ["OPTIONS"],
+    authLevel: "anonymous",
+    route: ".well-known/oauth-protected-resource",
+    handler: async (): Promise<HttpResponseInit> => ({
+      status: 204,
+      headers: CORS_HEADERS
+    })
+  });
+
 // ---------------------------------------------------------------------------
 // /oauth/register  — RFC 7591 Dynamic Client Registration
 // ---------------------------------------------------------------------------
@@ -298,6 +381,22 @@ app.http("oauth-register", {
   authLevel: "anonymous",
   route: "oauth/register",
   handler: oauthRegisterHandler
+});
+
+// Some OAuth clients probe the DCR endpoint with GET before issuing POST.
+// Return a lightweight capability document instead of 404 for compatibility.
+app.http("oauth-register-get", {
+  methods: ["GET"],
+  authLevel: "anonymous",
+  route: "oauth/register",
+  handler: async (): Promise<HttpResponseInit> => ({
+    status: 200,
+    headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+    body: JSON.stringify({
+      registration_endpoint: "/oauth/register",
+      registration_policy: "post-required"
+    })
+  })
 });
 
 // CORS preflight for the DCR endpoint.

@@ -155,6 +155,24 @@ const payload = await validateEntraToken(
 );
 ```
 
+**Additional MCP OAuth compatibility behavior**:
+
+```typescript
+// Unauthenticated POST /mcp returns 401 with WWW-Authenticate
+// including resource_metadata so Copilot Studio / Power Platform
+// can discover the authorization server correctly.
+res
+  .status(401)
+  .set("WWW-Authenticate", `Bearer realm="${req.protocol}://${req.get("host")}/mcp", resource_metadata="${resourceMetadataUrl}"`)
+```
+
+This repo also exposes:
+- `/.well-known/openid-configuration`
+- `/.well-known/oauth-authorization-server`
+- `/.well-known/oauth-protected-resource`
+
+These endpoints were required for Copilot Studio's OAuth flow to work reliably through the Power Platform consent proxy.
+
 ---
 
 ## Validation Flow (Sequence)

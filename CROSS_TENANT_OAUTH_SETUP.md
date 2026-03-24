@@ -62,7 +62,18 @@ Your app registration must be configured for multi-tenant support:
   ```
   https://oauth.botframework.com/callback
   https://global.consent.azure-apim.net/redirect
+  https://copilotstudio.preview.microsoft.com/connection/oauth/redirect
   ```
+
+For the current published Power Platform connector used by this repo, Entra also needed the connector-specific redirect URI below because the authorize request used it directly:
+
+```
+https://global.consent.azure-apim.net/redirect/cr7a3-5fservicenow-20mcp-5f635855ea92fead22
+```
+
+Note:
+- Power Platform can use either the base consent redirect URI or a connector-specific path under it.
+- If the HAR shows a different exact `redirect_uri`, register that exact URI too.
 
 ---
 
@@ -213,6 +224,23 @@ res.locals.callerUpn = payload.preferred_username;  // e.g., user@remotetenant.c
 2. Verify OAuth endpoints are working via OIDC discovery
 3. Confirm admin consent was granted (portal → Enterprise Applications)
 
+### ❌ Popup closes instantly before Entra login appears
+
+**Cause**:
+1. Power Platform cached stale or empty OAuth metadata when the connector was first created
+2. Or the server is missing MCP OAuth discovery pieces required by the consent proxy
+
+**Required server behavior**:
+1. `GET /.well-known/openid-configuration` returns 200
+2. `GET /.well-known/oauth-authorization-server` returns 200
+3. `GET /.well-known/oauth-protected-resource` returns 200
+4. Unauthenticated `POST /mcp` returns 401 with `WWW-Authenticate` including `resource_metadata=...`
+
+**Fix**:
+1. Deploy the server with the endpoints above
+2. Delete the Copilot Studio connection
+3. Recreate the connector / tool so Power Platform re-reads OAuth metadata
+
 ---
 
 ## Verification Checklist
@@ -239,8 +267,14 @@ res.locals.callerUpn = payload.preferred_username;  // e.g., user@remotetenant.c
 
 ### ✅ OIDC Discovery
 - [ ] GET `/.well-known/openid-configuration` returns 200
+- [ ] GET `/.well-known/oauth-authorization-server` returns 200
+- [ ] GET `/.well-known/oauth-protected-resource` returns 200
 - [ ] Response includes correct `issuer`, `authorization_endpoint`, `token_endpoint`
 - [ ] Scopes include `api://APPLICATION_ID/access_as_user`
+
+### ✅ MCP OAuth Challenge
+- [ ] Unauthenticated POST `/mcp` returns 401
+- [ ] `WWW-Authenticate` header includes `resource_metadata`
 
 ### ✅ DCR (Dynamic Client Registration)
 - [ ] POST `/oauth/register` returns 201

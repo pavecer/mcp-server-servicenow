@@ -2,6 +2,8 @@
 
 This project hosts a stateless MCP server for ServiceNow on Azure Functions.
 
+For reliable first-time deployments (including cross-tenant OAuth), see [AGENT_FIRST_TIME_DEPLOYMENT_RUNBOOK.md](AGENT_FIRST_TIME_DEPLOYMENT_RUNBOOK.md).
+
 It provides four MCP tools:
 
 - `search_catalog_items`: Search ServiceNow catalog items by free text intent (with optional category/catalog filtering). Returns matching items with their `sys_id`, `name`, `short_description`, `category`, `categorySysId`, `catalog`, `catalogSysId`, and a ready-to-render **Adaptive Card** (`selectionAdaptiveCard`) so the user can pick the right item interactively. Use `categorySysId`/`catalogSysId` from the results to restrict a follow-up search to the same category or catalog.
@@ -51,14 +53,19 @@ so every user in your tenant authenticates individually with their Microsoft ide
 2. Set a description and expiry, then click **Add**.
 3. Copy the **Value** immediately — this is your `ENTRA_CLIENT_SECRET` (shown only once).
 
-### 3. Add a redirect URI for Copilot Studio
+### 3. Add redirect URIs for Copilot Studio / Power Platform
 
 1. In the app registration, go to **Authentication > Add a platform > Web**.
-2. Add the Copilot Studio OAuth redirect URI:
+2. Add these redirect URIs:
    ```
    https://oauth.botframework.com/callback
+  https://global.consent.azure-apim.net/redirect
+  https://copilotstudio.preview.microsoft.com/connection/oauth/redirect
+  https://global.consent.azure-apim.net/redirect/cr7a3-5fservicenow-20mcp-5f635855ea92fead22
    ```
 3. Check **Access tokens** and **ID tokens** under **Implicit grant**, then **Save**.
+
+> Power Platform may use a connector-specific redirect URI under `https://global.consent.azure-apim.net/redirect/<connector-id>`. If the HAR shows a different exact `redirect_uri`, register that exact URI as well.
 
 ### 4. Expose an API scope (required for OAuth 2.0 token issuance)
 
@@ -82,6 +89,19 @@ To avoid individual user consent prompts when the Copilot Studio agent is shared
 3. Click **Grant admin consent for \<your tenant\>**.
 
 This makes the agent work for all tenant users without each needing to consent individually — important for a broadly shared Copilot Studio agent.
+
+### 6. MCP OAuth discovery requirements for Copilot Studio
+
+Copilot Studio / Power Platform expects the MCP server to expose all of these OAuth-related endpoints:
+
+- `/.well-known/openid-configuration`
+- `/.well-known/oauth-authorization-server`
+- `/.well-known/oauth-protected-resource`
+- `/oauth/register` for dynamic client registration
+
+Also, unauthenticated `POST /mcp` must return HTTP 401 with a `WWW-Authenticate` header that includes `resource_metadata` pointing to `/.well-known/oauth-protected-resource`.
+
+If you deploy OAuth fixes after the connector already exists, delete and recreate the Copilot Studio connection so Power Platform refreshes the cached OAuth metadata.
 
 ---
 
