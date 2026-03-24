@@ -1057,9 +1057,9 @@ node scripts/smoke-test.mjs
 az functionapp restart --resource-group <RG> --name <FUNC>
 
 # Check Key Vault role assignments for managed identity
-az role assignment list \
-  --assignee <MANAGED_IDENTITY_PRINCIPAL_ID> \
-  --role "4633458b-17de-408a-b874-0445c86b69e6" \
+az role assignment list `
+  --assignee <MANAGED_IDENTITY_PRINCIPAL_ID> `
+  --role "4633458b-17de-408a-b874-0445c86b69e6" `
   --output table
 ```
 
