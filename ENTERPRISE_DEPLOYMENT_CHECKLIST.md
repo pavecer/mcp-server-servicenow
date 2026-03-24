@@ -884,10 +884,10 @@ azd up --no-prompt
 4. Re-copy the Client Secret by clicking the lock icon — the visible value may have been masked after save.
 5. Update the Azure Function App settings with the correct values:
    ```powershell
-   az functionapp config appsettings set \
-     --resource-group <RG> --name <FUNC> \
-     --settings \
-       SERVICENOW_CLIENT_ID="<CORRECT_CLIENT_ID>" \
+   az functionapp config appsettings set `
+     --resource-group <RG> --name <FUNC> `
+     --settings `
+       SERVICENOW_CLIENT_ID="<CORRECT_CLIENT_ID>" `
        SERVICENOW_CLIENT_SECRET="<CORRECT_CLIENT_SECRET>"
    ```
 
