@@ -1,6 +1,43 @@
 import { ServiceNowCatalogItem, ServiceNowCatalogItemDetail, ServiceNowOrderResult, ServiceNowVariable } from "../types/servicenow";
 
 /**
+ * ServiceNow catalog fields may contain HTML markup. Adaptive Card TextBlock
+ * does not render raw HTML, so convert it into readable plain text.
+ */
+function toAdaptiveText(value?: string): string {
+  if (!value) {
+    return "";
+  }
+
+  const decoded = value
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'");
+
+  const text = decoded
+    .replace(/<\s*br\s*\/?\s*>/gi, "\n")
+    .replace(/<\s*\/p\s*>/gi, "\n\n")
+    .replace(/<\s*\/div\s*>/gi, "\n")
+    .replace(/<\s*li[^>]*>/gi, "• ")
+    .replace(/<\s*\/li\s*>/gi, "\n")
+    .replace(/<\s*\/?\s*(ul|ol)\b[^>]*>/gi, "\n")
+    .replace(/<[^>]+>/g, "");
+
+  const normalized = text
+    .replace(/\r/g, "")
+    .split("\n")
+    .map(line => line.replace(/\s+/g, " ").trim())
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  return normalized;
+}
+
+/**
  * Builds an Adaptive Card that presents a list of catalog items for the user
  * to choose from after a search. Each item is shown with its name, description,
  * category, and catalog, and can be selected by tapping/clicking the item
@@ -29,9 +66,13 @@ export function buildCatalogItemSelectionAdaptiveCard(
 
   for (const item of items) {
     const facts: Record<string, string>[] = [];
+    const itemName = toAdaptiveText(item.name) || item.name;
+    const shortDescription = toAdaptiveText(item.short_description);
 
-    const categoryLabel = item.category?.title ?? item.category?.name;
-    const catalogLabel = item.sc_catalog?.title ?? item.sc_catalog?.name;
+    const categoryLabelRaw = item.category?.title ?? item.category?.name;
+    const catalogLabelRaw = item.sc_catalog?.title ?? item.sc_catalog?.name;
+    const categoryLabel = categoryLabelRaw ? toAdaptiveText(categoryLabelRaw) : undefined;
+    const catalogLabel = catalogLabelRaw ? toAdaptiveText(catalogLabelRaw) : undefined;
 
     if (categoryLabel) {
       facts.push({ title: "Category:", value: categoryLabel });
@@ -47,7 +88,7 @@ export function buildCatalogItemSelectionAdaptiveCard(
       items: [
         {
           type: "TextBlock",
-          text: item.name,
+          text: itemName,
           weight: "Bolder",
           wrap: true
         },
@@ -55,7 +96,7 @@ export function buildCatalogItemSelectionAdaptiveCard(
           ? [
               {
                 type: "TextBlock",
-                text: item.short_description,
+                text: shortDescription,
                 wrap: true,
                 isSubtle: true,
                 spacing: "Small"
@@ -71,7 +112,7 @@ export function buildCatalogItemSelectionAdaptiveCard(
         data: {
           action: "select_catalog_item",
           itemSysId: item.sys_id,
-          itemName: item.name
+          itemName
         }
       }
     };
@@ -97,7 +138,9 @@ export function buildCatalogItemSelectionAdaptiveCard(
  */
 function buildVariableInput(variable: ServiceNowVariable): Record<string, unknown> | null {
   const type = variable.type?.toString() ?? "1";
-  const label = variable.label + (variable.mandatory ? " *" : "");
+  const normalizedLabel = toAdaptiveText(variable.label) || variable.name;
+  const normalizedInstructions = toAdaptiveText(variable.instructions);
+  const label = normalizedLabel + (variable.mandatory ? " *" : "");
   const required = variable.mandatory ?? false;
 
   // Dropdown / select
@@ -106,9 +149,12 @@ function buildVariableInput(variable: ServiceNowVariable): Record<string, unknow
       type: "Input.ChoiceSet",
       id: variable.name,
       label,
-      placeholder: variable.instructions ?? `Select ${variable.label}`,
+      placeholder: normalizedInstructions || `Select ${normalizedLabel}`,
       value: variable.default_value ?? "",
-      choices: (variable.choices ?? []).map(c => ({ title: c.label, value: c.value })),
+      choices: (variable.choices ?? []).map(c => ({
+        title: toAdaptiveText(c.label) || c.label,
+        value: c.value
+      })),
       isRequired: required
     };
   }
@@ -119,7 +165,7 @@ function buildVariableInput(variable: ServiceNowVariable): Record<string, unknow
       type: "Input.Toggle",
       id: variable.name,
       label,
-      title: variable.instructions ?? variable.label,
+      title: normalizedInstructions || normalizedLabel,
       value: variable.default_value === "true" ? "true" : "false"
     };
   }
@@ -152,7 +198,7 @@ function buildVariableInput(variable: ServiceNowVariable): Record<string, unknow
       type: "Input.Text",
       id: variable.name,
       label,
-      placeholder: variable.instructions ?? `Enter ${variable.label}`,
+      placeholder: normalizedInstructions || `Enter ${normalizedLabel}`,
       value: variable.default_value ?? "",
       isMultiline: true,
       isRequired: required
@@ -165,7 +211,7 @@ function buildVariableInput(variable: ServiceNowVariable): Record<string, unknow
       type: "Input.Number",
       id: variable.name,
       label,
-      placeholder: variable.instructions ?? `Enter ${variable.label}`,
+      placeholder: normalizedInstructions || `Enter ${normalizedLabel}`,
       value: variable.default_value ? Number(variable.default_value) : undefined,
       isRequired: required
     };
@@ -176,7 +222,7 @@ function buildVariableInput(variable: ServiceNowVariable): Record<string, unknow
     type: "Input.Text",
     id: variable.name,
     label,
-    placeholder: variable.instructions ?? `Enter ${variable.label}`,
+    placeholder: normalizedInstructions || `Enter ${normalizedLabel}`,
     value: variable.default_value ?? "",
     isRequired: required
   };
@@ -187,29 +233,32 @@ function buildVariableInput(variable: ServiceNowVariable): Record<string, unknow
  * The card contains inputs for each variable and a submit action.
  */
 export function buildOrderFormAdaptiveCard(item: ServiceNowCatalogItemDetail): Record<string, unknown> {
+  const shortDescription = toAdaptiveText(item.short_description);
+  const description = toAdaptiveText(item.description);
+
   const body: Record<string, unknown>[] = [
     {
       type: "TextBlock",
-      text: item.name,
+      text: toAdaptiveText(item.name),
       size: "Large",
       weight: "Bolder",
       wrap: true
     }
   ];
 
-  if (item.short_description) {
+  if (shortDescription) {
     body.push({
       type: "TextBlock",
-      text: item.short_description,
+      text: shortDescription,
       wrap: true,
       spacing: "Small"
     });
   }
 
-  if (item.description && item.description !== item.short_description) {
+  if (description && description !== shortDescription) {
     body.push({
       type: "TextBlock",
-      text: item.description,
+      text: description,
       wrap: true,
       isSubtle: true,
       spacing: "Small"

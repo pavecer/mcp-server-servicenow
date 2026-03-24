@@ -88,12 +88,18 @@ export function createMcpExpressApp(): express.Express {
       return;
     }
 
+    // RFC 6750 / MCP OAuth spec: include WWW-Authenticate with resource_metadata
+    // so MCP clients can discover the authorization server automatically.
+    const resourceMetadataUrl = `${req.protocol}://${req.get("host")}/.well-known/oauth-protected-resource`;
     const authHeader = req.header("Authorization") || req.header("authorization") || "";
     if (!authHeader.startsWith("Bearer ")) {
-      res.status(401).json({
-        error: "unauthorized",
-        error_description: "A valid Entra ID Bearer token is required. Configure OAuth 2.0 in Copilot Studio to obtain one automatically."
-      });
+      res
+        .status(401)
+        .set("WWW-Authenticate", `Bearer realm="${req.protocol}://${req.get("host")}/mcp", resource_metadata="${resourceMetadataUrl}"`)
+        .json({
+          error: "unauthorized",
+          error_description: "A valid Entra ID Bearer token is required. Configure OAuth 2.0 in Copilot Studio to obtain one automatically."
+        });
       return;
     }
 

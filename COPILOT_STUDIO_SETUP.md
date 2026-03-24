@@ -4,6 +4,37 @@
 
 This error occurs when Copilot Studio cannot access or parse the OIDC discovery endpoint.
 
+### CRITICAL: Recreate connection after any server OAuth changes
+
+The Power Platform consent proxy **caches the connector's OAuth server info when the
+connector is first created**. If the MCP server's OIDC endpoints didn't exist or returned
+errors when the connector was first set up, the connector's OAuth metadata will be empty or
+stale — the consent proxy will then return "No consent server information was associated
+with this request" and the popup closes instantly.
+
+**Fix**: Delete the MCP connection from Copilot Studio and re-add it from scratch after
+confirming the server's OIDC endpoints return 200:
+
+1. In Copilot Studio → **Tools** → find the ServiceNow MCP tool → **Remove**
+2. Go to **Settings** → **Connections** → delete the `ServiceNow MCP` connection entry
+3. Go to **Power Platform Admin Center** → verify the connector is also removed
+4. Re-add the MCP server from scratch (see setup steps below)
+
+This is required whenever:
+- ENTRA_* environment variables were empty when you first set up the connector
+- The server was redeployed with OAuth changes after initial connector creation
+- You see the popup close instantly with no Entra login page appearing
+
+### Diagnostics: Popup closes instantly without showing login
+
+If you see the connection popup close in under 5 seconds with no Entra login dialog:
+1. This means the consent proxy failed before even reaching Entra
+2. Key diagnostic: check App Insights for any calls to `/.well-known/openid-configuration`
+  or `/oauth/register` in the window when the popup was open — if there are none, the
+  connector has stale/empty OAuth metadata and must be recreated
+3. Fix: follow the "Recreate connection" steps above
+
+
 ### Root Cause Checklist
 
 #### 1. **Entra App Registration Issues**
@@ -19,7 +50,11 @@ This error occurs when Copilot Studio cannot access or parse the OIDC discovery 
 
 - [ ] **Redirect URI configured**
   - Authentication → Platform configurations → Web
-  - Redirect URIs must include: `https://oauth.botframework.com/callback`
+  - Redirect URIs must include:
+    - `https://oauth.botframework.com/callback`
+    - `https://global.consent.azure-apim.net/redirect`
+    - `https://copilotstudio.preview.microsoft.com/connection/oauth/redirect`
+    - `https://global.consent.azure-apim.net/redirect/cr7a3-5fservicenow-20mcp-5f635855ea92fead22`
   - Implicit grant: **Enable ID tokens** and **Access tokens**
 
 - [ ] **API scope exposed**
@@ -39,6 +74,18 @@ This error occurs when Copilot Studio cannot access or parse the OIDC discovery 
   - Should return HTTP 200 with JSON body
   - Must include: `issuer`, `authorization_endpoint`, `token_endpoint`
   - If using DCR (Dynamic Client Registration): must include `registration_endpoint`
+
+- [ ] **Test MCP OAuth compatibility endpoints**
+  ```
+  https://<your-function-app>.azurewebsites.net/.well-known/oauth-authorization-server
+  https://<your-function-app>.azurewebsites.net/.well-known/oauth-protected-resource
+  ```
+  - Both should return HTTP 200
+  - `oauth-protected-resource` must list the Function App base URL in `authorization_servers`
+
+- [ ] **Test unauthenticated POST challenge**
+  - `POST https://<your-function-app>.azurewebsites.net/mcp` with no Bearer token should return HTTP 401
+  - Response must include `WWW-Authenticate` with `resource_metadata=`
 
 - [ ] **Check function app logs**
   - Azure Portal → Function App
@@ -100,6 +147,9 @@ This error occurs when Copilot Studio cannot access or parse the OIDC discovery 
 2. Platform configurations → **Web** (add if missing)
 3. Redirect URIs:
    - Add: `https://oauth.botframework.com/callback`
+  - Add: `https://global.consent.azure-apim.net/redirect`
+  - Add: `https://copilotstudio.preview.microsoft.com/connection/oauth/redirect`
+  - Add: `https://global.consent.azure-apim.net/redirect/cr7a3-5fservicenow-20mcp-5f635855ea92fead22`
 4. Implicit grant and hybrid flows:
    - ✅ Check **ID tokens**
    - ✅ Check **Access tokens**
@@ -161,6 +211,24 @@ $response = Invoke-WebRequest `
 $response.StatusCode
 $response.Content | ConvertFrom-Json
 ```
+
+### Check MCP OAuth Challenge Manually
+
+```powershell
+$response = Invoke-WebRequest `
+  -Uri "https://<your-function-app>.azurewebsites.net/mcp" `
+  -Method POST `
+  -ContentType "application/json" `
+  -Body '{}' `
+  -SkipHttpErrorCheck
+
+$response.StatusCode
+$response.Headers["WWW-Authenticate"]
+```
+
+Expected:
+- Status code = `401`
+- `WWW-Authenticate` contains `resource_metadata="https://<your-function-app>.azurewebsites.net/.well-known/oauth-protected-resource"`
 
 ### Alternative: Use API Key Instead of OAuth
 

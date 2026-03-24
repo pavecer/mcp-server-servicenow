@@ -15,6 +15,7 @@ Your ServiceNow MCP server now supports **cross-tenant OAuth 2.0 authentication*
 - ✅ **Remote tenants** (e.g., where Copilot Studio is): Can authenticate users after granting admin consent
 - ✅ **Bearer token validation**: Cryptographically verified against the issuing tenant's public keys
 - ✅ **Backward compatible**: Single-tenant deployments continue to work unchanged
+- ✅ **Copilot Studio MCP OAuth compatibility**: RFC 8414 alias, RFC 9728 protected resource metadata, and proper `WWW-Authenticate` challenge are implemented
 
 ---
 
@@ -167,7 +168,7 @@ azd deploy
 | requestedAccessTokenVersion | ✅ Configured | `2` (OAuth 2.0 v2 tokens) |
 | Application ID URI | ✅ Configured | `api://44b3a088-05e3-4fcc-9216-d1b117ed489a` |
 | Scopes | ✅ Configured | `access_as_user` (with user consent text) |
-| Redirect URIs | ✅ Configured | `oauth.botframework.com/callback`, `global.consent.azure-apim.net/redirect` |
+| Redirect URIs | ✅ Configured | `oauth.botframework.com/callback`, `global.consent.azure-apim.net/redirect`, `global.consent.azure-apim.net/redirect/cr7a3-5fservicenow-20mcp-5f635855ea92fead22`, `copilotstudio.preview.microsoft.com/connection/oauth/redirect` |
 | Client Secret | ✅ Valid | Expires 2027-09-19 (1.5+ years valid) |
 
 **Conclusion**: Entra app is properly configured for multi-tenant deployments.
@@ -255,6 +256,15 @@ curl -s https://func-sp2iostp7h6vq.azurewebsites.net/.well-known/openid-configur
   "offline_access"
 ]
 ```
+
+### ✅ Additional MCP OAuth Discovery Endpoints
+
+The server now also exposes:
+
+- `/.well-known/oauth-authorization-server`
+- `/.well-known/oauth-protected-resource`
+
+And unauthenticated `POST /mcp` returns HTTP 401 with a `WWW-Authenticate` header containing `resource_metadata`, which Copilot Studio / Power Platform needed to complete OAuth setup reliably.
 
 ### ✅ DCR (Dynamic Client Registration) Endpoint
 ```bash

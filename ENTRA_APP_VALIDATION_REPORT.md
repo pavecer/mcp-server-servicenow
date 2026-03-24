@@ -60,8 +60,10 @@ Your Entra app registration has been successfully configured for multi-tenant OA
 |--------------|--------|---------|
 | `https://oauth.botframework.com/callback` | ✅ CONFIGURED | Copilot Studio OAuth callback |
 | `https://global.consent.azure-apim.net/redirect` | ✅ CONFIGURED | Azure API Management consent callback |
+| `https://global.consent.azure-apim.net/redirect/cr7a3-5fservicenow-20mcp-5f635855ea92fead22` | ✅ CONFIGURED | Current Power Platform connector-specific consent callback |
+| `https://copilotstudio.preview.microsoft.com/connection/oauth/redirect` | ✅ CONFIGURED | Copilot Studio popup redirect |
 
-**Validation**: Both required redirect URIs are registered. Copilot Studio can complete the authorization code flow and receive auth codes at these endpoints.
+**Validation**: The required Power Platform and Copilot Studio redirect URIs are registered. If a future HAR shows a different exact `redirect_uri`, register that exact URI too.
 
 ---
 
@@ -122,6 +124,12 @@ Your Entra app registration has been successfully configured for multi-tenant OA
 - `scopes_supported`: `["api://44b3a088-05e3-4fcc-9216-d1b117ed489a/access_as_user", "openid", "profile", "email", "offline_access"]`
 
 **Status**: ✅ **FULLY SUPPORTED** (implemented in MCP server)
+
+Additional compatibility endpoints implemented in the MCP server:
+- `/.well-known/oauth-authorization-server`
+- `/.well-known/oauth-protected-resource`
+
+And unauthenticated `POST /mcp` returns HTTP 401 with `WWW-Authenticate` including `resource_metadata`, which the Power Platform consent flow required.
 
 ### 3. ✅ Dynamic Client Registration (DCR)
 
@@ -205,9 +213,11 @@ https://login.microsoftonline.com/f8cdef31-a31b-4234-b2be-1234567890ab/admincons
 
 ### ✅ MCP Server Code
 - ✅ OIDC discovery endpoint implemented
+- ✅ RFC 8414 alias endpoint implemented
+- ✅ RFC 9728 protected resource metadata endpoint implemented
 - ✅ DCR (OAuth register) endpoint implemented
 - ✅ Multi-tenant token validation implemented
-- ✅ Bearer token middleware enforces validation
+- ✅ Bearer token middleware enforces validation and returns MCP-compatible `WWW-Authenticate`
 
 ### ✅ Azure Deployment
 - ✅ Code deployed to Azure Function App
