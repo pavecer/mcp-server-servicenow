@@ -150,7 +150,7 @@ This app registration is the OAuth 2.0 identity used by Copilot Studio to authen
    - ✅ **ID tokens**
 4. Click **Save**.
 
-> **Note on connector-specific redirect URIs**: The URI ending in `635855ea92fead22` is the published connector identifier for this repository. Power Platform may send this exact URI, or a different connector-specific URI, during the first OAuth flow. If login fails with a redirect URI mismatch error (`AADSTS50011`), inspect the `authorize` request in your browser's Network tab to find the exact `redirect_uri` parameter being used, then register that URI in the app registration. See the [Redirect URI mismatch troubleshooting entry](#-redirect-uri-mismatch-aadsts50011-during-entra-login) for details.
+> **Note on connector-specific redirect URIs**: The URI ending in `635855ea92fead22` is the published connector identifier for this repository. Power Platform may send this exact URI, or a different connector-specific URI, during the first OAuth flow. If login fails with a redirect URI mismatch error (`AADSTS50011`), inspect the `authorize` request in your browser's Network tab to find the exact `redirect_uri` parameter being used, then register that URI in the app registration. See the [Redirect URI mismatch troubleshooting entry](#redirect-uri-mismatch-aadsts50011-during-entra-login) for details.
 
 #### Step 5 — Set token version to v2
 
@@ -369,7 +369,7 @@ $response.Headers["WWW-Authenticate"]         # must contain resource_metadata=
 $env:MCP_ENDPOINT_URL = (azd env get-value MCP_ENDPOINT_URL).Trim()
 $env:FUNCTION_KEY     = (az functionapp function keys list `
   --resource-group $rg --name $func `
-  --function-name mcp --output json | ConvertFrom-Json).default
+  --function-name servicenow-mcp --output json | ConvertFrom-Json).default
 $env:SEARCH_QUERY     = "laptop"
 
 node scripts/smoke-test.mjs
@@ -538,7 +538,7 @@ The integration user needs the minimum set of roles to call the Service Catalog 
 
 ### 2.5 Note Down the ServiceNow Credentials
 
-Before leaving the ServiceNow configuration, confirm you have all four values:
+Before leaving the ServiceNow configuration, confirm you have all five values:
 
 | Variable | Value |
 |---|---|
@@ -780,13 +780,13 @@ End-to-End Test
    $principalId = (az functionapp show -g <RG> -n <FUNC> --query "identity.principalId" -o tsv)
 
    # Storage Blob Data Owner
-   az role assignment create --assignee $principalId \
-     --role "ba92f5b4-2d11-453d-a403-e96b0029c9fe" \
+   az role assignment create --assignee $principalId `
+     --role "ba92f5b4-2d11-453d-a403-e96b0029c9fe" `
      --scope "/subscriptions/<SUB>/resourceGroups/<RG>/providers/Microsoft.Storage/storageAccounts/<ST>"
 
    # Key Vault Secrets User
-   az role assignment create --assignee $principalId \
-     --role "4633458b-17de-408a-b874-0445c86b69e6" \
+   az role assignment create --assignee $principalId `
+     --role "4633458b-17de-408a-b874-0445c86b69e6" `
      --scope "/subscriptions/<SUB>/resourceGroups/<RG>/providers/Microsoft.KeyVault/vaults/<KV>"
    ```
 3. Re-run `azd up`.
@@ -808,20 +808,20 @@ End-to-End Test
 2. Re-run `azd up`.
 3. Verify the app settings are populated:
    ```powershell
-   az functionapp config appsettings list \
-     --resource-group <RG> --name <FUNC> \
-     --query "[?starts_with(name,'ENTRA_')].[name,value]" \
+   az functionapp config appsettings list `
+     --resource-group <RG> --name <FUNC> `
+     --query "[?starts_with(name,'ENTRA_')].[name,value]" `
      --output table
    ```
 
 **Emergency runtime patch** (if re-deployment is not possible immediately):
 ```powershell
-az functionapp config appsettings set \
-  --resource-group <RG> --name <FUNC> \
-  --settings \
-    ENTRA_TENANT_ID="<ENTRA_TENANT_ID>" \
-    ENTRA_CLIENT_ID="<ENTRA_CLIENT_ID>" \
-    ENTRA_CLIENT_SECRET="<ENTRA_CLIENT_SECRET>" \
+az functionapp config appsettings set `
+  --resource-group <RG> --name <FUNC> `
+  --settings `
+    ENTRA_TENANT_ID="<ENTRA_TENANT_ID>" `
+    ENTRA_CLIENT_ID="<ENTRA_CLIENT_ID>" `
+    ENTRA_CLIENT_SECRET="<ENTRA_CLIENT_SECRET>" `
     ENTRA_AUDIENCE="api://<ENTRA_CLIENT_ID>"
 ```
 
@@ -866,9 +866,9 @@ azd up --no-prompt
 1. Wait up to 10 minutes for RBAC propagation.
 2. Verify the role assignment exists:
    ```powershell
-   az role assignment list \
-     --assignee <MANAGED_IDENTITY_PRINCIPAL_ID> \
-     --role "4633458b-17de-408a-b874-0445c86b69e6" \
+   az role assignment list `
+     --assignee <MANAGED_IDENTITY_PRINCIPAL_ID> `
+     --role "4633458b-17de-408a-b874-0445c86b69e6" `
      --scope "/subscriptions/<SUB>/resourceGroups/<RG>/providers/Microsoft.KeyVault/vaults/<KV>"
    ```
 3. If missing, create it manually (see the RBAC fix above).
@@ -894,10 +894,10 @@ azd up --no-prompt
 4. Re-copy the Client Secret by clicking the lock icon — the visible value may have been masked after save.
 5. Update the Azure Function App settings with the correct values:
    ```powershell
-   az functionapp config appsettings set \
-     --resource-group <RG> --name <FUNC> \
-     --settings \
-       SERVICENOW_CLIENT_ID="<CORRECT_CLIENT_ID>" \
+   az functionapp config appsettings set `
+     --resource-group <RG> --name <FUNC> `
+     --settings `
+       SERVICENOW_CLIENT_ID="<CORRECT_CLIENT_ID>" `
        SERVICENOW_CLIENT_SECRET="<CORRECT_CLIENT_SECRET>"
    ```
 
@@ -998,8 +998,8 @@ azd up --no-prompt
    ```
    Or patch immediately:
    ```powershell
-   az functionapp config appsettings set \
-     --resource-group <RG> --name <FUNC> \
+   az functionapp config appsettings set `
+     --resource-group <RG> --name <FUNC> `
      --settings ENTRA_TRUSTED_TENANT_IDS="<REMOTE_TENANT_ID>"
    ```
 
@@ -1067,9 +1067,9 @@ node scripts/smoke-test.mjs
 az functionapp restart --resource-group <RG> --name <FUNC>
 
 # Check Key Vault role assignments for managed identity
-az role assignment list \
-  --assignee <MANAGED_IDENTITY_PRINCIPAL_ID> \
-  --role "4633458b-17de-408a-b874-0445c86b69e6" \
+az role assignment list `
+  --assignee <MANAGED_IDENTITY_PRINCIPAL_ID> `
+  --role "4633458b-17de-408a-b874-0445c86b69e6" `
   --output table
 ```
 
