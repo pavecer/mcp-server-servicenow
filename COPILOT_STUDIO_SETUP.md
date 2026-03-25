@@ -1,5 +1,15 @@
 # Copilot Studio Setup & Troubleshooting
 
+## ServiceNow Ordering Topic Implementation
+
+For the end-to-end topic-based ordering implementation (intent -> search -> item selection card -> order form card -> submit order), use these artifacts:
+
+- Topic blueprint YAML: [copilot-studio/topics/servicenow-ordering.topics.yaml](copilot-studio/topics/servicenow-ordering.topics.yaml)
+- Action contracts: [docs/MCS_ACTION_CONTRACTS.md](docs/MCS_ACTION_CONTRACTS.md)
+- Full setup and test runbook: [docs/MCS_SERVICENOW_ORDERING_RUNBOOK.md](docs/MCS_SERVICENOW_ORDERING_RUNBOOK.md)
+
+If your Copilot Studio environment does not support direct YAML topic import, create topics manually and map the nodes from the YAML blueprint.
+
 ## Error: "Failed to login. Could not discover authorization server metadata"
 
 This error occurs when Copilot Studio cannot access or parse the OIDC discovery endpoint.
