@@ -1,10 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { ServiceNowClient } from "../services/servicenowClient";
+import { serviceNowClient as client } from "../services/servicenowClient";
 import { buildOrderConfirmationAdaptiveCard } from "../utils/adaptiveCards";
 import { config } from "../config";
-
-const client = new ServiceNowClient();
 
 export function registerPlaceOrderTool(server: McpServer): void {
   server.tool(

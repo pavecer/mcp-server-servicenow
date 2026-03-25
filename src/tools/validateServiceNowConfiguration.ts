@@ -19,10 +19,6 @@ interface ValidationSummary {
   warnings: number;
 }
 
-function pushCheck(checks: ValidationCheck[], check: ValidationCheck): void {
-  checks.push(check);
-}
-
 function summarizeChecks(checks: ValidationCheck[]): ValidationSummary {
   return checks.reduce(
     (acc, check) => {
@@ -126,7 +122,7 @@ export function registerValidateServiceNowConfigurationTool(server: McpServer): 
         if (!forceClientCredentials && callerToken) {
           accessToken = callerToken;
           authMode = "caller_token";
-          pushCheck(checks, {
+          checks.push({
             name: "auth.token_source",
             status: "passed",
             message: "Using x-servicenow-access-token from request header"
@@ -134,7 +130,7 @@ export function registerValidateServiceNowConfigurationTool(server: McpServer): 
         } else {
           accessToken = await tokenManager.getAccessToken();
           authMode = "client_credentials";
-          pushCheck(checks, {
+          checks.push({
             name: "auth.client_credentials",
             status: "passed",
             message: "Successfully acquired access token via client_credentials"
@@ -142,7 +138,7 @@ export function registerValidateServiceNowConfigurationTool(server: McpServer): 
         }
       } catch (err) {
         const details = extractAxiosError(err);
-        pushCheck(checks, {
+        checks.push({
           name: "auth.client_credentials",
           status: "failed",
           message: `Unable to obtain token: ${details.message}`,
@@ -192,7 +188,7 @@ export function registerValidateServiceNowConfigurationTool(server: McpServer): 
           selectedItemSysId = items[0].sys_id;
         }
 
-        pushCheck(checks, {
+        checks.push({
           name: "api.catalog.list",
           status: "passed",
           message: `Catalog list call succeeded (found ${items.length} item(s) for query '${query}')`,
@@ -200,7 +196,7 @@ export function registerValidateServiceNowConfigurationTool(server: McpServer): 
         });
 
         if (items.length === 0) {
-          pushCheck(checks, {
+          checks.push({
             name: "permissions.catalog_visibility",
             status: "warning",
             message: "No catalog items were returned. This can indicate missing catalog visibility permissions or simply no matches for the query."
@@ -208,7 +204,7 @@ export function registerValidateServiceNowConfigurationTool(server: McpServer): 
         }
       } catch (err) {
         const details = extractAxiosError(err);
-        pushCheck(checks, {
+        checks.push({
           name: "api.catalog.list",
           status: "failed",
           message: `Catalog list call failed: ${details.message}`,
@@ -227,7 +223,7 @@ export function registerValidateServiceNowConfigurationTool(server: McpServer): 
             }
           );
 
-          pushCheck(checks, {
+          checks.push({
             name: "api.catalog.item_detail",
             status: "passed",
             message: `Catalog item detail call succeeded for sys_id=${selectedItemSysId}`,
@@ -235,7 +231,7 @@ export function registerValidateServiceNowConfigurationTool(server: McpServer): 
           });
         } catch (err) {
           const details = extractAxiosError(err);
-          pushCheck(checks, {
+          checks.push({
             name: "api.catalog.item_detail",
             status: "failed",
             message: `Catalog item detail call failed for sys_id=${selectedItemSysId}: ${details.message}`,
@@ -243,7 +239,7 @@ export function registerValidateServiceNowConfigurationTool(server: McpServer): 
           });
         }
       } else {
-        pushCheck(checks, {
+        checks.push({
           name: "api.catalog.item_detail",
           status: "warning",
           message: "Skipped item detail check because no catalog item sys_id was available."
@@ -252,7 +248,7 @@ export function registerValidateServiceNowConfigurationTool(server: McpServer): 
 
       if (probeOrderNow) {
         if (!selectedItemSysId) {
-          pushCheck(checks, {
+          checks.push({
             name: "api.catalog.order_now",
             status: "failed",
             message: "Order probe requested but no item sys_id available. Provide orderProbeItemSysId or use a query that returns items."
@@ -265,14 +261,14 @@ export function registerValidateServiceNowConfigurationTool(server: McpServer): 
             };
 
             await client.post(`/api/sn_sc/servicecatalog/items/${selectedItemSysId}/order_now`, orderPayload);
-            pushCheck(checks, {
+            checks.push({
               name: "api.catalog.order_now",
               status: "passed",
               message: `order_now call succeeded for sys_id=${selectedItemSysId}. A request may have been created in ServiceNow.`
             });
           } catch (err) {
             const details = extractAxiosError(err);
-            pushCheck(checks, {
+            checks.push({
               name: "api.catalog.order_now",
               status: "failed",
               message: `order_now call failed for sys_id=${selectedItemSysId}: ${details.message}`,
@@ -281,7 +277,7 @@ export function registerValidateServiceNowConfigurationTool(server: McpServer): 
           }
         }
       } else {
-        pushCheck(checks, {
+        checks.push({
           name: "api.catalog.order_now",
           status: "warning",
           message: "Order endpoint probe skipped. Set probeOrderNow=true to explicitly validate order_now permission (can create a request)."

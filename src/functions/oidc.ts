@@ -55,6 +55,12 @@ const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization"
 };
 
+// Reusable CORS preflight handler shared by all well-known and DCR endpoints.
+const corsOptionsHandler = async (): Promise<HttpResponseInit> => ({
+  status: 204,
+  headers: CORS_HEADERS
+});
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -245,93 +251,84 @@ app.http("oidc-discovery-options", {
   methods: ["OPTIONS"],
   authLevel: "anonymous",
   route: ".well-known/openid-configuration",
-  handler: async (): Promise<HttpResponseInit> => ({
-    status: 204,
-    headers: CORS_HEADERS
-  })
+  handler: corsOptionsHandler
 });
 
-  // ---------------------------------------------------------------------------
-  // /.well-known/oauth-authorization-server  — RFC 8414 alias
-  // ---------------------------------------------------------------------------
-  // Some MCP clients (including Copilot Studio) try this path before the
-  // OIDC well-known path.  Serve the same discovery document for compatibility.
-  app.http("oauth-authorization-server", {
-    methods: ["GET"],
-    authLevel: "anonymous",
-    route: ".well-known/oauth-authorization-server",
-    handler: oidcDiscoveryHandler
-  });
+// ---------------------------------------------------------------------------
+// /.well-known/oauth-authorization-server  — RFC 8414 alias
+// ---------------------------------------------------------------------------
+// Some MCP clients (including Copilot Studio) try this path before the
+// OIDC well-known path.  Serve the same discovery document for compatibility.
+app.http("oauth-authorization-server", {
+  methods: ["GET"],
+  authLevel: "anonymous",
+  route: ".well-known/oauth-authorization-server",
+  handler: oidcDiscoveryHandler
+});
 
-  app.http("oauth-authorization-server-options", {
-    methods: ["OPTIONS"],
-    authLevel: "anonymous",
-    route: ".well-known/oauth-authorization-server",
-    handler: async (): Promise<HttpResponseInit> => ({
-      status: 204,
-      headers: CORS_HEADERS
-    })
-  });
+app.http("oauth-authorization-server-options", {
+  methods: ["OPTIONS"],
+  authLevel: "anonymous",
+  route: ".well-known/oauth-authorization-server",
+  handler: corsOptionsHandler
+});
 
-  // ---------------------------------------------------------------------------
-  // /.well-known/oauth-protected-resource  — RFC 9728
-  // ---------------------------------------------------------------------------
-  // OAuth 2.0 Protected Resource Metadata document.  MCP clients use this to
-  // locate the authorization server for this resource (the MCP server).
-  // Reference: https://datatracker.ietf.org/doc/rfc9728/
-  async function oauthProtectedResourceHandler(
-    request: HttpRequest,
-    _context: InvocationContext
-  ): Promise<HttpResponseInit> {
-    const { tenantId, clientId } = config.entraAuth;
+// ---------------------------------------------------------------------------
+// /.well-known/oauth-protected-resource  — RFC 9728
+// ---------------------------------------------------------------------------
+// OAuth 2.0 Protected Resource Metadata document.  MCP clients use this to
+// locate the authorization server for this resource (the MCP server).
+// Reference: https://datatracker.ietf.org/doc/rfc9728/
+async function oauthProtectedResourceHandler(
+  request: HttpRequest,
+  _context: InvocationContext
+): Promise<HttpResponseInit> {
+  const { tenantId, clientId } = config.entraAuth;
 
-    if (!tenantId || !clientId) {
-      return {
-        status: 404,
-        headers: { "Content-Type": "application/json", ...CORS_HEADERS },
-        body: JSON.stringify({ error: "Entra ID is not configured on this server" })
-      };
-    }
-
-    const requestUrl = new URL(request.url);
-    const serverBase = `${requestUrl.protocol}//${requestUrl.host}`;
-    const mcpResourceUrl = `${serverBase}/mcp`;
-
-    const metadata = {
-      resource: mcpResourceUrl,
-      authorization_servers: [serverBase],
-      bearer_methods_supported: ["header"],
-      scopes_supported: getAdvertisedOAuthScopes(clientId),
-      resource_documentation: `${serverBase}/.well-known/openid-configuration`
-    };
-
+  if (!tenantId || !clientId) {
     return {
-      status: 200,
-      headers: {
-        "Content-Type": "application/json",
-        "Cache-Control": `public, max-age=${OIDC_CACHE_MAX_AGE_SECONDS}`,
-        ...CORS_HEADERS
-      },
-      body: JSON.stringify(metadata)
+      status: 404,
+      headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+      body: JSON.stringify({ error: "Entra ID is not configured on this server" })
     };
   }
 
-  app.http("oauth-protected-resource", {
-    methods: ["GET"],
-    authLevel: "anonymous",
-    route: ".well-known/oauth-protected-resource",
-    handler: oauthProtectedResourceHandler
-  });
+  const requestUrl = new URL(request.url);
+  const serverBase = `${requestUrl.protocol}//${requestUrl.host}`;
+  const mcpResourceUrl = `${serverBase}/mcp`;
 
-  app.http("oauth-protected-resource-options", {
-    methods: ["OPTIONS"],
-    authLevel: "anonymous",
-    route: ".well-known/oauth-protected-resource",
-    handler: async (): Promise<HttpResponseInit> => ({
-      status: 204,
-      headers: CORS_HEADERS
-    })
-  });
+  const metadata = {
+    resource: mcpResourceUrl,
+    authorization_servers: [serverBase],
+    bearer_methods_supported: ["header"],
+    scopes_supported: getAdvertisedOAuthScopes(clientId),
+    resource_documentation: `${serverBase}/.well-known/openid-configuration`
+  };
+
+  return {
+    status: 200,
+    headers: {
+      "Content-Type": "application/json",
+      "Cache-Control": `public, max-age=${OIDC_CACHE_MAX_AGE_SECONDS}`,
+      ...CORS_HEADERS
+    },
+    body: JSON.stringify(metadata)
+  };
+}
+
+app.http("oauth-protected-resource", {
+  methods: ["GET"],
+  authLevel: "anonymous",
+  route: ".well-known/oauth-protected-resource",
+  handler: oauthProtectedResourceHandler
+});
+
+app.http("oauth-protected-resource-options", {
+  methods: ["OPTIONS"],
+  authLevel: "anonymous",
+  route: ".well-known/oauth-protected-resource",
+  handler: corsOptionsHandler
+});
 
 // ---------------------------------------------------------------------------
 // /oauth/register  — RFC 7591 Dynamic Client Registration
@@ -435,8 +432,5 @@ app.http("oauth-register-options", {
   methods: ["OPTIONS"],
   authLevel: "anonymous",
   route: "oauth/register",
-  handler: async (): Promise<HttpResponseInit> => ({
-    status: 204,
-    headers: CORS_HEADERS
-  })
+  handler: corsOptionsHandler
 });

@@ -86,3 +86,10 @@ export class ServiceNowClient {
     return response.data.result;
   }
 }
+
+/**
+ * Shared ServiceNowClient singleton for use across MCP tools.
+ * A single instance is preferred so the internal TokenManager's token cache
+ * is reused within an Azure Functions instance, avoiding redundant token fetches.
+ */
+export const serviceNowClient = new ServiceNowClient();

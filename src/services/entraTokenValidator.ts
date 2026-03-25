@@ -86,16 +86,17 @@ async function getSigningKey(kid: string, tenantId: string): Promise<crypto.KeyO
 // Helpers
 // ---------------------------------------------------------------------------
 
-function base64urlDecode(input: string): string {
+function normalizeBase64url(input: string): string {
   const base64 = input.replace(/-/g, "+").replace(/_/g, "/");
-  const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
-  return Buffer.from(padded, "base64").toString("utf8");
+  return base64 + "=".repeat((4 - (base64.length % 4)) % 4);
+}
+
+function base64urlDecode(input: string): string {
+  return Buffer.from(normalizeBase64url(input), "base64").toString("utf8");
 }
 
 function base64urlToBuffer(input: string): Buffer {
-  const base64 = input.replace(/-/g, "+").replace(/_/g, "/");
-  const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
-  return Buffer.from(padded, "base64");
+  return Buffer.from(normalizeBase64url(input), "base64");
 }
 
 // ---------------------------------------------------------------------------

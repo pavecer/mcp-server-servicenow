@@ -1,9 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { ServiceNowClient } from "../services/servicenowClient";
+import { serviceNowClient as client } from "../services/servicenowClient";
 import { buildOrderFormAdaptiveCard } from "../utils/adaptiveCards";
-
-const client = new ServiceNowClient();
 
 export function registerGetCatalogItemFormTool(server: McpServer): void {
   server.tool(
