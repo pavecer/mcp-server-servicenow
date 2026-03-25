@@ -3,6 +3,10 @@
 This project hosts a stateless MCP server for ServiceNow on Azure Functions.
 
 For reliable first-time deployments (including cross-tenant OAuth), see [AGENT_FIRST_TIME_DEPLOYMENT_RUNBOOK.md](AGENT_FIRST_TIME_DEPLOYMENT_RUNBOOK.md).
+For Copilot Studio topic orchestration and Adaptive Card ordering flow setup, see:
+- [docs/MCS_SERVICENOW_ORDERING_RUNBOOK.md](docs/MCS_SERVICENOW_ORDERING_RUNBOOK.md)
+- [docs/MCS_ACTION_CONTRACTS.md](docs/MCS_ACTION_CONTRACTS.md)
+- [copilot-studio/topics/servicenow-ordering.topics.yaml](copilot-studio/topics/servicenow-ordering.topics.yaml)
 
 It provides four MCP tools:
 

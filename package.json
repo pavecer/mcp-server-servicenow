@@ -10,7 +10,8 @@
     "start": "func start",
     "start:dev": "npm run build && func start",
     "smoke:test": "node scripts/smoke-test.mjs",
-    "test": "echo \"No tests configured\""
+    "test": "echo \"No tests configured\"",
+    "lint:topics": "node local/lint-topics.mjs"
   },
   "keywords": [],
   "author": "",
