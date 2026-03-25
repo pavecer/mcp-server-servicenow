@@ -16,6 +16,7 @@
     "ENTRA_CLIENT_ID": "",
     "ENTRA_CLIENT_SECRET": "",
     "ENTRA_AUDIENCE": "",
+    "ENTRA_OAUTH_SCOPES": "openid profile offline_access User.Read",
     "ENTRA_AUTH_DISABLED": "true"
   }
 }

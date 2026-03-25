@@ -104,7 +104,7 @@ export function createMcpExpressApp(): express.Express {
     }
 
     const token = authHeader.slice(7);
-    const acceptedAudiences = buildAcceptedAudiences(entra.clientId, entra.audience ?? undefined);
+    const acceptedAudiences = buildAcceptedAudiences(entra.clientId, entra.audience ?? undefined, entra.allowedAudiences);
 
     try {
       const payload = await validateEntraToken(

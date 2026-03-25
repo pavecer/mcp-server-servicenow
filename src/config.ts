@@ -40,6 +40,11 @@ export const config = {
     // Expected audience in the Bearer token. Defaults to the Entra client ID.
     // Override to "api://<clientId>" when the app exposes a custom App ID URI.
     audience: process.env.ENTRA_AUDIENCE,
+    // Space-delimited OAuth scopes advertised in OIDC discovery and DCR output.
+    // Must contain delegated scopes (v2 style) and should include offline_access
+    // to allow stable refresh token behavior in Power Platform connectors.
+    // Example: "openid profile offline_access User.Read"
+    oauthScopes: process.env.ENTRA_OAUTH_SCOPES,
     // Set to "true" to bypass Bearer token validation (local dev / smoke tests).
     disabled: process.env.ENTRA_AUTH_DISABLED === "true",
     // For cross-tenant scenarios: comma-separated list of trusted remote tenant GUIDs
@@ -50,6 +55,11 @@ export const config = {
     // For cross-tenant scenarios: set to "true" to accept tokens from ANY Microsoft tenant.
     // ⚠️  Use caution: this creates an open OAuth endpoint. Verify via audience validation
     // and request identifiers that the caller is authorized before giving access to data.
-    allowAnyTenant: process.env.ENTRA_ALLOW_ANY_TENANT === "true"
+    allowAnyTenant: process.env.ENTRA_ALLOW_ANY_TENANT === "true",
+    // Additional accepted audience values beyond the auto-derived GUID and api://<clientId>.
+    // Comma-separated list. Use when your app has a custom App ID URI or non-standard audience.
+    allowedAudiences: process.env.ENTRA_ALLOWED_AUDIENCES
+      ? process.env.ENTRA_ALLOWED_AUDIENCES.split(",").map(a => a.trim()).filter(Boolean)
+      : []
   }
 };

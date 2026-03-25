@@ -249,6 +249,7 @@ Optional settings for Entra auth (production; leave blank for local testing):
 | `ENTRA_CLIENT_ID` | Entra app registration client ID |
 | `ENTRA_CLIENT_SECRET` | Entra client secret (required for DCR) |
 | `ENTRA_AUDIENCE` | Expected `aud` in Entra tokens (default: `api://<ENTRA_CLIENT_ID>`) |
+| `ENTRA_OAUTH_SCOPES` | Space-delimited OAuth scopes advertised to clients. Use delegated v2 scopes and include `offline_access` (example: `openid profile offline_access User.Read`) |
 | `ENTRA_AUTH_DISABLED` | Set `true` to skip Bearer token validation locally (default in sample: `true`) |
 | `ENTRA_DCR_REGISTRATION_TOKEN` | Optional initial access token required on `POST /oauth/register` |
 

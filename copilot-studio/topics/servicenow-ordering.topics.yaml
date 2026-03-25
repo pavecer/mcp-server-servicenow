@@ -1,327 +1,86 @@
-version: 1
-metadata:
-  solution: servicenow-ordering
-  owner: mcp-server-servicenow
-  description: |
-    Blueprint topic package for Microsoft Copilot Studio to orchestrate
-    ServiceNow ordering via MCP tools and Adaptive Cards.
-  notes:
-    - This file is a source-controlled blueprint for topic design and handoff.
-    - Copilot Studio topic internals may evolve; use runbook steps to map nodes.
+kind: AdaptiveDialog
+modelDescription: |-
+  You will help users request ServiceNow catalog items by searching items, collecting required details, and placing an order.
 
-globals:
-  variables:
-    conversationSummary: string
-    inferredIntent: string
-    inferredQuery: string
-    selectedItemSysId: string
-    selectedItemName: string
-    selectedCatalogSysId: string
-    selectedCategorySysId: string
-    itemSearchResultsJson: string
-    itemSelectionCardJson: string
-    itemFormCardJson: string
-    formSubmitPayloadJson: string
-    orderResultJson: string
-    correlationId: string
-    operationStatus: string
-    operationError: string
+  You must only place orders after explicit user confirmation.
 
-topics:
-  - id: SN-01-IntentAndSearch
-    displayName: ServiceNow Intent And Catalog Search
-    purpose: |
-      Determine user intent from conversation context and search ServiceNow
-      catalog items the user can access.
-    triggers:
-      - type: phrase
-        value: I need to request something in ServiceNow
-      - type: phrase
-        value: Help me order a catalog item
-      - type: phrase
-        value: I want to request hardware or software
-      - type: phrase
-        value: Start ServiceNow order
-      - type: handoff
-        fromTopicId: '*'
-        condition: userIntentInvolvesServiceNowOrdering == true
-    inputs:
-      - name: userPrompt
-        type: string
-        required: true
-      - name: conversationSummary
-        type: string
-        required: false
-    steps:
-      - id: step-set-correlation
-        type: setVariable
-        variable: correlationId
-        value: =Guid()
-      - id: step-build-query
-        type: expression
-        description: |
-          Minimal deterministic query inference in topic. Keep simple and pass
-          rich context to MCP for final ranking.
-        outputs:
-          inferredIntent: =If(IsBlank(conversationSummary), userPrompt, conversationSummary)
-          inferredQuery: =userPrompt
-      - id: step-call-search
-        type: callTool
-        toolName: search_catalog_items
-        request:
-          query: =inferredQuery
-          limit: 10
-        responseMapping:
-          operationStatus: =If(IsBlank(tool.error), 'ok', 'error')
-          operationError: =Coalesce(tool.error.message, '')
-          itemSearchResultsJson: =tool.content[0].text
-      - id: step-parse-search
-        type: parseJson
-        sourceVariable: itemSearchResultsJson
-        outputs:
-          found: number
-          items: array
-          selectionAdaptiveCard: object
-      - id: step-handle-no-results
-        type: condition
-        condition: =found = 0
-        ifTrue:
-          - type: sendMessage
-            message: I could not find matching catalog items. Tell me what you need in different words.
-          - type: endTopic
-        ifFalse:
-          - type: setVariable
-            variable: itemSelectionCardJson
-            value: =JsonString(selectionAdaptiveCard)
-          - type: handoff
-            toTopicId: SN-02-SelectCatalogItem
-            payload:
-              itemSelectionCardJson: =itemSelectionCardJson
-              itemSearchResultsJson: =itemSearchResultsJson
-              correlationId: =correlationId
+  Example valid requests:
+  "I need a new laptop"
+  "Order a monitor in ServiceNow"
+  "Help me request software"
 
-  - id: SN-02-SelectCatalogItem
-    displayName: ServiceNow Select Catalog Item
-    purpose: Render selection card and capture selected item.
-    triggers:
-      - type: handoff
-        fromTopicId: SN-01-IntentAndSearch
-    inputs:
-      - name: itemSelectionCardJson
-        type: string
-        required: true
-      - name: itemSearchResultsJson
-        type: string
-        required: true
-      - name: correlationId
-        type: string
-        required: true
-    steps:
-      - id: step-render-selection-card
-        type: sendAdaptiveCard
-        cardJsonVariable: itemSelectionCardJson
-        onSubmit:
-          savePayloadTo: formSubmitPayloadJson
-      - id: step-parse-selection-submit
-        type: parseJson
-        sourceVariable: formSubmitPayloadJson
-        outputs:
-          action: string
-          itemSysId: string
-          itemName: string
-      - id: step-validate-selection
-        type: condition
-        condition: =action = 'select_catalog_item' And Not(IsBlank(itemSysId))
-        ifTrue:
-          - type: setVariable
-            variable: selectedItemSysId
-            value: =itemSysId
-          - type: setVariable
-            variable: selectedItemName
-            value: =itemName
-          - type: handoff
-            toTopicId: SN-03-RenderOrderFormCard
-            payload:
-              selectedItemSysId: =selectedItemSysId
-              selectedItemName: =selectedItemName
-              correlationId: =correlationId
-        ifFalse:
-          - type: sendMessage
-            message: I could not read your selection. Please choose an item again.
-          - type: repeatStep
-            stepId: step-render-selection-card
+  Example invalid requests:
+  "Order something without telling me what"
+  "Submit random data"
+beginDialog:
+  kind: OnRecognizedIntent
+  id: main
+  intent:
+    triggerQueries:
+      - I need to request something in ServiceNow
+      - Help me order a catalog item
+      - I want to request hardware or software
+      - Start ServiceNow order
 
-  - id: SN-03-RenderOrderFormCard
-    displayName: ServiceNow Render Order Form
-    purpose: Get selected item order form and render as adaptive card.
-    triggers:
-      - type: handoff
-        fromTopicId: SN-02-SelectCatalogItem
-    inputs:
-      - name: selectedItemSysId
-        type: string
-        required: true
-      - name: selectedItemName
-        type: string
-        required: false
-      - name: correlationId
-        type: string
-        required: true
-    steps:
-      - id: step-call-get-form
-        type: callTool
-        toolName: get_catalog_item_form
-        request:
-          itemSysId: =selectedItemSysId
-        responseMapping:
-          operationStatus: =If(IsBlank(tool.error), 'ok', 'error')
-          operationError: =Coalesce(tool.error.message, '')
-          itemSearchResultsJson: =tool.content[0].text
-      - id: step-check-form-error
-        type: condition
-        condition: =operationStatus = 'error'
-        ifTrue:
-          - type: sendMessage
-            message: I could not load the order form. Please try another item or try again later.
-          - type: endTopic
-        ifFalse:
-          - type: parseJson
-            sourceVariable: itemSearchResultsJson
-            outputs:
-              itemSysId: string
-              itemName: string
-              variableCount: number
-              adaptiveCard: object
-          - type: setVariable
-            variable: itemFormCardJson
-            value: =JsonString(adaptiveCard)
-          - type: handoff
-            toTopicId: SN-04-SubmitOrder
-            payload:
-              selectedItemSysId: =selectedItemSysId
-              selectedItemName: =itemName
-              itemFormCardJson: =itemFormCardJson
-              correlationId: =correlationId
+  actions:
+    - kind: SendActivity
+      id: intro_msg
+      activity: I can help you place a ServiceNow catalog order. Tell me what you want to request.
 
-  - id: SN-04-SubmitOrder
-    displayName: ServiceNow Submit Order
-    purpose: Capture adaptive card form submission and place order in ServiceNow.
-    triggers:
-      - type: handoff
-        fromTopicId: SN-03-RenderOrderFormCard
-    inputs:
-      - name: selectedItemSysId
-        type: string
-        required: true
-      - name: selectedItemName
-        type: string
-        required: false
-      - name: itemFormCardJson
-        type: string
-        required: true
-      - name: correlationId
-        type: string
-        required: true
-    steps:
-      - id: step-render-form-card
-        type: sendAdaptiveCard
-        cardJsonVariable: itemFormCardJson
-        onSubmit:
-          savePayloadTo: formSubmitPayloadJson
-      - id: step-call-place-order
-        type: callTool
-        toolName: place_order
-        request:
-          itemSysId: =selectedItemSysId
-          variables: =JsonObjectWithoutFields(formSubmitPayloadJson, ['action', 'itemSysId'])
-          quantity: 1
-        responseMapping:
-          operationStatus: =If(IsBlank(tool.error), 'ok', 'error')
-          operationError: =Coalesce(tool.error.message, '')
-          orderResultJson: =tool.content[0].text
-      - id: step-check-order-status
-        type: condition
-        condition: =operationStatus = 'ok'
-        ifTrue:
-          - type: parseJson
-            sourceVariable: orderResultJson
-            outputs:
-              success: boolean
-              requestNumber: string
-              requestId: string
-              adaptiveCard: object
-          - type: sendAdaptiveCard
-            cardJsonVariable: =JsonString(adaptiveCard)
-          - type: sendMessage
-            message: Your ServiceNow request was submitted successfully.
-          - type: endTopic
-        ifFalse:
-          - type: handoff
-            toTopicId: SN-05-FallbackQuestionFlow
-            payload:
-              selectedItemSysId: =selectedItemSysId
-              selectedItemName: =selectedItemName
-              operationError: =operationError
-              correlationId: =correlationId
+    - kind: Question
+      id: ask_request
+      variable: Topic.UserRequest
+      prompt: What item would you like to request?
+      entity:
+        kind: EmbeddedEntity
+        definition:
+          kind: ClosedListEntity
+          items: []
+      alwaysPrompt: true
 
-  - id: SN-05-FallbackQuestionFlow
-    displayName: ServiceNow Fallback Form Collection
-    purpose: |
-      Backup flow when adaptive card submission fails or channel does not support
-      required rendering behavior.
-    triggers:
-      - type: handoff
-        fromTopicId: SN-04-SubmitOrder
-    inputs:
-      - name: selectedItemSysId
-        type: string
-        required: true
-      - name: selectedItemName
-        type: string
-        required: false
-      - name: operationError
-        type: string
-        required: false
-      - name: correlationId
-        type: string
-        required: true
-    steps:
-      - id: step-explain-fallback
-        type: sendMessage
-        message: I could not complete the card submission. I will collect required details step by step.
-      - id: step-call-get-form-fallback
-        type: callTool
-        toolName: get_catalog_item_form
-        request:
-          itemSysId: =selectedItemSysId
-        responseMapping:
-          itemFormCardJson: =tool.content[0].text
-      - id: step-manual-collect
-        type: sendMessage
-        message: Please provide the missing order details in a single message.
-      - id: step-capture-user-input
-        type: askQuestion
-        question: Enter the order details as key/value pairs.
-        saveAnswerTo: formSubmitPayloadJson
-      - id: step-call-place-order-fallback
-        type: callTool
-        toolName: place_order
-        request:
-          itemSysId: =selectedItemSysId
-          variables: =ParseLooseKeyValuePairs(formSubmitPayloadJson)
-          quantity: 1
-        responseMapping:
-          orderResultJson: =tool.content[0].text
-      - id: step-fallback-done
-        type: sendMessage
-        message: Thank you. I submitted your request and will share confirmation next.
-      - id: step-send-fallback-confirmation
-        type: parseJson
-        sourceVariable: orderResultJson
-        outputs:
-          adaptiveCard: object
-      - id: step-render-confirmation
-        type: sendAdaptiveCard
-        cardJsonVariable: =JsonString(adaptiveCard)
-      - id: step-end
-        type: endTopic
+    - kind: BeginDialog
+      id: call_search
+      displayName: Search ServiceNow Catalog Items
+      input:
+        binding:
+          query: =Topic.UserRequest
+          limit: =10
+      dialog: tools.searchCatalogItems
+      output:
+        binding:
+          resultJson: Topic.SearchResultJson
+          error: Topic.SearchError
+
+    - kind: ConditionGroup
+      id: search_status
+      conditions:
+        - id: search_failed
+          condition: =Not(IsBlank(Topic.SearchError))
+          actions:
+            - kind: SendActivity
+              id: search_failed_msg
+              activity: I could not search the ServiceNow catalog right now. Please try again.
+            - kind: EndDialog
+              id: end_search_failed
+
+    - kind: SendActivity
+      id: search_ok
+      activity: I found matching catalog items. Please select one in the ordering flow.
+
+    - kind: EndDialog
+      id: end_success
+
+inputType:
+  properties: {}
+
+outputType:
+  properties:
+    SearchResultJson:
+      displayName: SearchResultJson
+      type: String
+    SearchError:
+      displayName: SearchError
+      type: String
+    UserRequest:
+      displayName: UserRequest
+      type: String
