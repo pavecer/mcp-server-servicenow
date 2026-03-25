@@ -75,6 +75,38 @@ interface MsMetadataCache {
 const msMetadataCache = new Map<string, MsMetadataCache>();
 
 /**
+ * Returns the scopes that this server advertises in OIDC discovery and DCR.
+ *
+ * Default (when ENTRA_OAUTH_SCOPES is not set and clientId is known):
+ *   api://<clientId>/access_as_user  openid  profile  offline_access
+ *
+ * - `api://<clientId>/access_as_user` is the correct v2 delegated scope that
+ *   makes Power Platform request a token for THIS API specifically, not for
+ *   Microsoft Graph. Tokens issued with this scope have aud=api://<clientId>
+ *   which our validator accepts.
+ * - `offline_access` is mandatory for stable refresh-token issuance. Without
+ *   it Power Platform cannot silently refresh and connections go stale.
+ * - `openid` and `profile` are always enforced even if omitted in overrides.
+ *
+ * Override via ENTRA_OAUTH_SCOPES env var (space-delimited).
+ */
+function getAdvertisedOAuthScopes(clientId?: string): string[] {
+  const configured = (config.entraAuth.oauthScopes ?? "").trim();
+  const defaultScopes = clientId
+    ? [`api://${clientId}/access_as_user`, "openid", "profile", "offline_access"]
+    : ["openid", "profile", "offline_access"];
+  const scopes = (configured ? configured : defaultScopes.join(" "))
+    .split(/\s+/)
+    .map(scope => scope.trim())
+    .filter(Boolean);
+
+  const normalized = new Set(scopes);
+  normalized.add("openid");
+  normalized.add("offline_access");
+  return Array.from(normalized);
+}
+
+/**
  * Fetches real endpoint URLs from Microsoft's OIDC discovery document so the
  * issuer in our discovery doc matches the iss claim in actual tokens — which is
  * always GUID-based even when ENTRA_TENANT_ID is configured as a domain.
@@ -163,6 +195,8 @@ async function oidcDiscoveryHandler(
       ? "https://login.microsoftonline.com/common/discovery/v2.0/keys"
       : `https://login.microsoftonline.com/${tenantId}/discovery/v2.0/keys`);
 
+  const oauthScopes = getAdvertisedOAuthScopes(clientId);
+
   const discoveryDoc = {
     issuer: issuerBase,
     authorization_endpoint: authorizationEndpoint,
@@ -174,10 +208,7 @@ async function oidcDiscoveryHandler(
     ...(config.entraAuth.clientSecret
       ? { registration_endpoint: `${serverBase}/oauth/register` }
       : {}),
-    scopes_supported: [
-      `api://${clientId}/access_as_user`,
-      "openid", "profile", "email", "offline_access"
-    ],
+    scopes_supported: oauthScopes,
     response_types_supported: ["code"],
     response_modes_supported: ["query", "fragment"],
     grant_types_supported: ["authorization_code", "refresh_token"],
@@ -270,7 +301,7 @@ app.http("oidc-discovery-options", {
       resource: mcpResourceUrl,
       authorization_servers: [serverBase],
       bearer_methods_supported: ["header"],
-      scopes_supported: [`api://${clientId}/access_as_user`, "openid", "profile", "email", "offline_access"],
+      scopes_supported: getAdvertisedOAuthScopes(clientId),
       resource_documentation: `${serverBase}/.well-known/openid-configuration`
     };
 
@@ -366,7 +397,7 @@ async function oauthRegisterHandler(
     grant_types: ["authorization_code", "refresh_token"],
     response_types: ["code"],
     token_endpoint_auth_method: "client_secret_post",
-    scope: `api://${clientId}/access_as_user openid profile email offline_access`
+    scope: getAdvertisedOAuthScopes(clientId).join(" ")
   };
 
   return {

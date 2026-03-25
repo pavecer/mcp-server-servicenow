@@ -38,7 +38,9 @@ export interface EntraTokenPayload {
 const JWKS_CACHE_TTL_MS = 60 * 60 * 1_000; // 1 hour
 const MAX_CLOCK_SKEW_SECONDS = 300; // 5 minutes
 
-let jwksCache: JwksCache | undefined;
+// Per-tenant JWKS cache: keyed by tenantId so concurrent requests from
+// different Entra tenants never overwrite each other's signing keys.
+const jwksCacheByTenant = new Map<string, JwksCache>();
 
 async function fetchJwks(jwksUri: string): Promise<Map<string, EntraJwk>> {
   const { data } = await axios.get<{ keys: EntraJwk[] }>(jwksUri, { timeout: 10_000 });
@@ -49,26 +51,29 @@ async function fetchJwks(jwksUri: string): Promise<Map<string, EntraJwk>> {
   );
 }
 
-async function getSigningKey(kid: string, jwksUri: string): Promise<crypto.KeyObject> {
+/**
+ * Returns the signing public key for the given kid, fetching/refreshing the
+ * JWKS for the issuing tenant as needed. Cache is scoped per-tenant so that
+ * multi-tenant scenarios never mix keys from different identity providers.
+ */
+async function getSigningKey(kid: string, tenantId: string): Promise<crypto.KeyObject> {
+  const jwksUri = `https://login.microsoftonline.com/${tenantId}/discovery/v2.0/keys`;
   const now = Date.now();
 
-  if (!jwksCache || now > jwksCache.expiresAtMs) {
-    jwksCache = {
-      keys: await fetchJwks(jwksUri),
-      expiresAtMs: now + JWKS_CACHE_TTL_MS
-    };
+  let cache = jwksCacheByTenant.get(tenantId);
+  if (!cache || now > cache.expiresAtMs) {
+    cache = { keys: await fetchJwks(jwksUri), expiresAtMs: now + JWKS_CACHE_TTL_MS };
+    jwksCacheByTenant.set(tenantId, cache);
   }
 
-  let jwk = jwksCache.keys.get(kid);
+  let jwk = cache.keys.get(kid);
   if (!jwk) {
     // Signing key not found — the IdP may have rotated keys, refresh once.
-    jwksCache = {
-      keys: await fetchJwks(jwksUri),
-      expiresAtMs: now + JWKS_CACHE_TTL_MS
-    };
-    jwk = jwksCache.keys.get(kid);
+    cache = { keys: await fetchJwks(jwksUri), expiresAtMs: now + JWKS_CACHE_TTL_MS };
+    jwksCacheByTenant.set(tenantId, cache);
+    jwk = cache.keys.get(kid);
     if (!jwk) {
-      throw new Error(`Unknown signing key kid=${kid}`);
+      throw new Error(`Unknown signing key kid=${kid} for tenant ${tenantId}`);
     }
   }
 
@@ -158,15 +163,14 @@ export async function validateEntraToken(
   }
 
   // Fetch public key and verify RS256 signature using the issuing tenant's JWKS endpoint.
-  const jwksUri = `https://login.microsoftonline.com/${tokenTenantId}/discovery/v2.0/keys`;
-  const publicKey = await getSigningKey(header.kid, jwksUri);
+  const publicKey = await getSigningKey(header.kid, tokenTenantId);
 
   const verifier = crypto.createVerify("RSA-SHA256");
   verifier.update(`${headerB64}.${payloadB64}`);
   const signatureBuffer = base64urlToBuffer(signatureB64);
 
   if (!verifier.verify(publicKey, signatureBuffer)) {
-    throw new Error("Invalid JWT signature");
+    throw new Error(`Invalid JWT signature (kid=${header.kid}, alg=${header.alg ?? "RS256"}, tid=${tokenTenantId})`);
   }
 
   // Validate standard claims.
@@ -204,29 +208,42 @@ export async function validateEntraToken(
     throw new Error("Invalid issuer");
   }
 
-  const issuerHostValid =
-    issUrl.hostname === "login.microsoftonline.com" ||
-    issUrl.hostname === "sts.windows.net";
+  const isV2Issuer = issUrl.hostname === "login.microsoftonline.com";
+  const isV1Issuer = issUrl.hostname === "sts.windows.net";
 
-  const pathSegments = issUrl.pathname.replace(/^\/+|\/+$/g, "").split("/");
-  if (pathSegments.length < 2) {
-    throw new Error("Invalid issuer");
+  if (!isV2Issuer && !isV1Issuer) {
+    throw new Error(`Invalid issuer host: ${issUrl.hostname} (expected login.microsoftonline.com or sts.windows.net)`);
   }
 
-  const [issuerTenant, issuerVersion] = pathSegments;
+  const segments = issUrl.pathname.replace(/^\/+|\/+$/g, "").split("/").filter(Boolean);
 
-  const issuerVersionValid = issuerVersion === "v2.0";
-  // Issuer tenant should match the tid claim (since we just validated tid is trusted)
-  const issuerTenantMatchesTid = issuerTenant === tokenTenantId;
+  let issuerTenant: string;
+  if (isV2Issuer) {
+    // v2.0 format: https://login.microsoftonline.com/{tid}/v2.0
+    if (segments.length < 2 || segments[1] !== "v2.0") {
+      throw new Error(`Invalid issuer path for v2.0 token: ${issUrl.pathname}`);
+    }
+    issuerTenant = segments[0];
+  } else {
+    // v1.0 format: https://sts.windows.net/{tid}/
+    if (segments.length < 1) {
+      throw new Error(`Invalid issuer path for v1.0 token: ${issUrl.pathname}`);
+    }
+    issuerTenant = segments[0];
+  }
 
-  if (!issuerHostValid || !issuerVersionValid || !issuerTenantMatchesTid) {
-    throw new Error("Invalid issuer");
+  if (issuerTenant !== tokenTenantId) {
+    throw new Error(`Issuer tenant ${issuerTenant} does not match token tid ${tokenTenantId}`);
   }
 
   // At least one aud value must be in the accepted set.
   const tokenAudiences = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
   if (!tokenAudiences.some(a => acceptedAudiences.has(a))) {
-    throw new Error("Invalid audience");
+    throw new Error(
+      `Invalid audience: token has [${tokenAudiences.join(", ")}], ` +
+      `expected one of [${Array.from(acceptedAudiences).join(", ")}]. ` +
+      `Ensure the connector/DCR scope is set to api://<clientId>/access_as_user (not a Microsoft Graph scope).`
+    );
   }
 
   return payload;
@@ -234,12 +251,21 @@ export async function validateEntraToken(
 
 /**
  * Builds the set of accepted audience values for a given Entra client ID.
- * Includes both the GUID and the conventional api:// App ID URI.
+ * Always includes the raw GUID and the conventional api:// App ID URI.
+ * Additional audiences can be supplied via audienceOverride and additionalAudiences
+ * (e.g. from ENTRA_ALLOWED_AUDIENCES env var) for non-standard App ID URIs.
  */
-export function buildAcceptedAudiences(clientId: string, audienceOverride?: string): Set<string> {
+export function buildAcceptedAudiences(
+  clientId: string,
+  audienceOverride?: string,
+  additionalAudiences?: string[]
+): Set<string> {
   const audiences = new Set<string>([clientId, `api://${clientId}`]);
   if (audienceOverride && audienceOverride !== clientId) {
     audiences.add(audienceOverride);
+  }
+  for (const aud of (additionalAudiences ?? [])) {
+    if (aud) audiences.add(aud);
   }
   return audiences;
 }
