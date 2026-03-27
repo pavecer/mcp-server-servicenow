@@ -1,0 +1,201 @@
+kind: AdaptiveDialog
+modelDescription: |-
+  Trigger this topic once user confirms to order something from ServiceNow catalog.
+  This topic drives a deterministic search → select → form → confirm → order flow
+  using dedicated REST API operations (not raw MCP InvokeServer).
+  Adaptive Cards are rendered natively at each step.
+
+# ───────────────────────────────────────────────────────────────────────────────
+# HOW THIS TOPIC WORKS
+#
+# Step 1  — Search: calls SearchCatalogItems REST operation, sends selectionAdaptiveCard
+#            so the user can tap/click the item they want.
+# Step 2  — Select: waits for user input. When the user taps an item on the card,
+#            the card's Action.Submit sends back a message containing the sysId.
+#            A question step captures it.
+# Step 3  — Form: calls GetCatalogItemForm REST operation for the selected sysId,
+#            sends formAdaptiveCard so the user can fill in required variables.
+# Step 4  — Collect: waits for form submission (card Action.Submit returns JSON string
+#            with variable values). A question step captures it.
+# Step 5  — Confirm: asks the user to confirm the order before submitting.
+# Step 6  — Order: calls PlaceCatalogOrder REST operation, sends confirmationAdaptiveCard.
+#
+# CONNECTOR SETUP (required before this topic works):
+# In Power Platform, update the existing custom connector using the OpenAPI spec at:
+#   docs/CATALOG_REST_API.openapi.json
+# The connector must use the same OAuth 2.0 credentials as the MCP connector.
+# Operations needed: SearchCatalogItems, GetCatalogItemForm, PlaceCatalogOrder
+# ───────────────────────────────────────────────────────────────────────────────
+
+beginDialog:
+  kind: OnRecognizedIntent
+  id: main
+  intent: {}
+  actions:
+
+    # ── Step 1: Ask what the user wants ────────────────────────────────────────
+    - kind: Question
+      id: ask_request
+      variable: Topic.UserRequest
+      prompt: What would you like to order from the ServiceNow catalog?
+      alwaysPrompt: true
+
+    # ── Step 2: Search catalog ─────────────────────────────────────────────────
+    - kind: InvokeConnectorAction
+      id: search_catalog
+      displayName: Search ServiceNow Catalog
+      connectionReference: pve_agent.shared_cr7a3-5fservicenow-20mcp-5f635855ea92fead22.37907672dba449e88064ebd97aff5e8e
+      connectionProperties:
+        mode: Invoker
+      operationId: SearchCatalogItems
+      input:
+        binding:
+          query: =Topic.UserRequest
+          limit: =10
+      output:
+        kind: SingleVariableOutputBinding
+        variable: Topic.SearchResult
+
+    # ── Step 3: Handle no results ──────────────────────────────────────────────
+    - kind: ConditionGroup
+      id: check_search_results
+      conditions:
+        - id: no_results
+          condition: =Topic.SearchResult.found = 0
+          actions:
+            - kind: SendActivity
+              id: no_results_msg
+              activity: I couldn't find any catalog items matching your request. Please try different keywords.
+            - kind: EndDialog
+              id: end_no_results
+
+    # ── Step 4: Show selection card ────────────────────────────────────────────
+    # The selectionAdaptiveCard returned from the API is sent as a native
+    # Adaptive Card attachment. Each item has an Action.Submit that sends back
+    # the selected item's sysId as the user's next message.
+    - kind: SendActivity
+      id: show_selection_card
+      activity:
+        attachments:
+          - contentType: application/vnd.microsoft.card.adaptive
+            content: =Topic.SearchResult.selectionAdaptiveCard
+
+    # ── Step 5: Capture item selection ────────────────────────────────────────
+    - kind: Question
+      id: capture_selection
+      variable: Topic.SelectedSysId
+      prompt: Please select an item from the list above.
+      entity:
+        kind: EmbeddedEntity
+        definition:
+          kind: ClosedListEntity
+          items: []
+
+    # ── Step 6: Get order form ─────────────────────────────────────────────────
+    - kind: InvokeConnectorAction
+      id: get_form
+      displayName: Get Order Form
+      connectionReference: pve_agent.shared_cr7a3-5fservicenow-20mcp-5f635855ea92fead22.37907672dba449e88064ebd97aff5e8e
+      connectionProperties:
+        mode: Invoker
+      operationId: GetCatalogItemForm
+      input:
+        binding:
+          sysId: =Topic.SelectedSysId
+      output:
+        kind: SingleVariableOutputBinding
+        variable: Topic.FormResult
+
+    # ── Step 7: Show form card ─────────────────────────────────────────────────
+    - kind: SendActivity
+      id: show_form_intro
+      activity: "Here is the order form for **{Topic.FormResult.name}**. Please fill in the details:"
+
+    - kind: SendActivity
+      id: show_form_card
+      activity:
+        attachments:
+          - contentType: application/vnd.microsoft.card.adaptive
+            content: =Topic.FormResult.formAdaptiveCard
+
+    # ── Step 8: Capture form submission ───────────────────────────────────────
+    # When the user submits the Adaptive Card form, Action.Submit sends back
+    # the variable values as a JSON string. Stored for the order step.
+    - kind: Question
+      id: capture_form
+      variable: Topic.FormVariablesJson
+      prompt: Please fill in the form above and click Submit.
+      alwaysPrompt: true
+
+    # ── Step 9: Confirm before ordering ───────────────────────────────────────
+    - kind: Question
+      id: confirm_order
+      variable: Topic.OrderConfirmed
+      prompt: "Ready to submit your order for **{Topic.FormResult.name}**. Shall I go ahead?"
+      entity:
+        kind: EmbeddedEntity
+        definition:
+          kind: ClosedListEntity
+          items:
+            - id: yes
+              displayName: "Yes"
+              synonyms:
+                - yes
+                - confirm
+                - go ahead
+                - submit
+                - ok
+                - sure
+            - id: no
+              displayName: "No"
+              synonyms:
+                - no
+                - cancel
+                - stop
+                - abort
+
+    - kind: ConditionGroup
+      id: check_confirmation
+      conditions:
+        - id: cancelled
+          condition: =Topic.OrderConfirmed = "no"
+          actions:
+            - kind: SendActivity
+              id: cancelled_msg
+              activity: Order cancelled. Let me know if you'd like to try again.
+            - kind: EndDialog
+              id: end_cancelled
+
+    # ── Step 10: Place order ───────────────────────────────────────────────────
+    - kind: InvokeConnectorAction
+      id: place_order
+      displayName: Place Order
+      connectionReference: pve_agent.shared_cr7a3-5fservicenow-20mcp-5f635855ea92fead22.37907672dba449e88064ebd97aff5e8e
+      connectionProperties:
+        mode: Invoker
+      operationId: PlaceCatalogOrder
+      input:
+        binding:
+          itemSysId: =Topic.SelectedSysId
+          variables: =JSON(Topic.FormVariablesJson)
+          quantity: =1
+      output:
+        kind: SingleVariableOutputBinding
+        variable: Topic.OrderResult
+
+    # ── Step 11: Show confirmation card ───────────────────────────────────────
+    - kind: SendActivity
+      id: show_confirmation_card
+      activity:
+        attachments:
+          - contentType: application/vnd.microsoft.card.adaptive
+            content: =Topic.OrderResult.confirmationAdaptiveCard
+
+    - kind: EndDialog
+      id: end_success
+
+inputType:
+  properties: {}
+
+outputType:
+  properties: {}
