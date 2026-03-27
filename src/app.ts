@@ -6,6 +6,7 @@ import { getMinimalToolDefinitions, registerTools } from "./tools/index";
 import { runWithRequestContext } from "./requestContext";
 import { config } from "./config";
 import { validateEntraToken, buildAcceptedAudiences } from "./services/entraTokenValidator";
+import { entraAuthMiddleware } from "./utils/entraAuthMiddleware";
 
 /**
  * Creates and returns the Express application that hosts the MCP server.
@@ -118,10 +119,34 @@ export function createMcpExpressApp(): express.Express {
       res.locals.callerUpn = payload.preferred_username || payload.upn;
       next();
     } catch (err) {
-      res.status(401).json({
-        error: "unauthorized",
-        error_description: `Bearer token validation failed: ${err instanceof Error ? err.message : "unknown error"}`
-      });
+      const errMsg = err instanceof Error ? err.message : "unknown error";
+      const isExpired = errMsg.toLowerCase().includes("expired") || errMsg.toLowerCase().includes("exp");
+
+      // RFC 6750 §3.1: return WWW-Authenticate with error="invalid_token" so
+      // OAuth clients (including Power Platform connectors) know to refresh the
+      // access token automatically instead of presenting it again until it is
+      // accepted.  Without this header, Power Platform treats the 401 as a
+      // hard auth failure and never triggers a silent token refresh, causing
+      // the connector to appear broken after inactivity.
+      //
+      // error="invalid_token"  → the token is expired/revoked/wrong audience;
+      //                          the client SHOULD attempt a token refresh.
+      // resource_metadata      → lets the connector re-discover OAuth endpoints
+      //                          if its cached metadata is stale.
+      const wwwAuthenticate = [
+        `Bearer realm="${req.protocol}://${req.get("host")}/mcp"`,
+        `resource_metadata="${resourceMetadataUrl}"`,
+        `error="invalid_token"`,
+        `error_description="${isExpired ? "The access token has expired" : "The access token is invalid"}`
+      ].join(", ");
+
+      res
+        .status(401)
+        .set("WWW-Authenticate", wwwAuthenticate)
+        .json({
+          error: "unauthorized",
+          error_description: `Bearer token validation failed: ${errMsg}`
+        });
     }
   });
 
