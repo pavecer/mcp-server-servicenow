@@ -37,6 +37,109 @@ function toAdaptiveText(value?: string): string {
   return normalized;
 }
 
+function normalizeVariableType(variable: ServiceNowVariable): string {
+  const candidates = [
+    variable.type,
+    variable.question_type,
+    variable.ui_type,
+    variable.field_type
+  ];
+
+  for (const candidate of candidates) {
+    if (candidate === undefined || candidate === null) {
+      continue;
+    }
+
+    if (typeof candidate === "string" || typeof candidate === "number") {
+      return String(candidate).trim().toLowerCase();
+    }
+
+    if (typeof candidate === "object") {
+      const raw = (candidate as Record<string, unknown>).value
+        ?? (candidate as Record<string, unknown>).name
+        ?? (candidate as Record<string, unknown>).type;
+      if (typeof raw === "string" || typeof raw === "number") {
+        return String(raw).trim().toLowerCase();
+      }
+    }
+  }
+
+  return "1";
+}
+
+function normalizeChoices(variable: ServiceNowVariable): Array<{ title: string; value: string }> {
+  const rawChoices = variable.choices;
+  if (!rawChoices) {
+    return [];
+  }
+
+  if (Array.isArray(rawChoices)) {
+    return rawChoices
+      .map(choice => {
+        if (typeof choice === "string" || typeof choice === "number") {
+          const value = String(choice);
+          return { title: value, value };
+        }
+
+        if (!choice || typeof choice !== "object") {
+          return null;
+        }
+
+        const entry = choice as unknown as Record<string, unknown>;
+        const rawValue = entry.value ?? entry.name ?? entry.id;
+        const rawTitle = entry.label ?? entry.title ?? entry.text ?? rawValue;
+
+        if (rawValue === undefined || rawValue === null || rawTitle === undefined || rawTitle === null) {
+          return null;
+        }
+
+        const value = String(rawValue);
+        const title = toAdaptiveText(String(rawTitle)) || String(rawTitle);
+        return { title, value };
+      })
+      .filter((choice): choice is { title: string; value: string } => Boolean(choice));
+  }
+
+  if (typeof rawChoices === "object") {
+    const entries = Object.entries(rawChoices as Record<string, unknown>);
+    return entries
+      .map(([key, raw]) => {
+        if (raw === undefined || raw === null) {
+          return null;
+        }
+
+        if (typeof raw === "string" || typeof raw === "number") {
+          return {
+            title: toAdaptiveText(String(raw)) || String(raw),
+            value: key
+          };
+        }
+
+        if (typeof raw === "object") {
+          const entry = raw as Record<string, unknown>;
+          const rawValue = entry.value ?? key;
+          const rawTitle = entry.label ?? entry.title ?? entry.text ?? rawValue;
+          if (rawValue === undefined || rawValue === null || rawTitle === undefined || rawTitle === null) {
+            return null;
+          }
+          return {
+            title: toAdaptiveText(String(rawTitle)) || String(rawTitle),
+            value: String(rawValue)
+          };
+        }
+
+        return null;
+      })
+      .filter((choice): choice is { title: string; value: string } => Boolean(choice));
+  }
+
+  return [];
+}
+
+function isMultiSelectType(type: string): boolean {
+  return ["21", "33", "multiple", "multiple_choice", "checkbox", "check_box", "multi_select"].includes(type);
+}
+
 /**
  * Builds an Adaptive Card that presents a list of catalog items for the user
  * to choose from after a search. Each item is shown with its name, description,
@@ -137,24 +240,24 @@ export function buildCatalogItemSelectionAdaptiveCard(
  *  14 = Select box, 18 = Lookup select, 21 = Multiple choice
  */
 function buildVariableInput(variable: ServiceNowVariable): Record<string, unknown> | null {
-  const type = variable.type?.toString() ?? "1";
+  const type = normalizeVariableType(variable);
+  const choices = normalizeChoices(variable);
   const normalizedLabel = toAdaptiveText(variable.label) || variable.name;
   const normalizedInstructions = toAdaptiveText(variable.instructions);
   const label = normalizedLabel + (variable.mandatory ? " *" : "");
   const required = variable.mandatory ?? false;
 
   // Dropdown / select
-  if (["14", "18", "21", "select"].includes(type) || (variable.choices && variable.choices.length > 0)) {
+  if (choices.length > 0 || ["14", "18", "21", "select", "lookup", "choice"].includes(type)) {
     return {
       type: "Input.ChoiceSet",
       id: variable.name,
       label,
       placeholder: normalizedInstructions || `Select ${normalizedLabel}`,
       value: variable.default_value ?? "",
-      choices: (variable.choices ?? []).map(c => ({
-        title: toAdaptiveText(c.label) || c.label,
-        value: c.value
-      })),
+      choices,
+      isMultiSelect: isMultiSelectType(type),
+      style: isMultiSelectType(type) ? "expanded" : "compact",
       isRequired: required
     };
   }

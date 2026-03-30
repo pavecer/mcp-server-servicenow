@@ -24,11 +24,14 @@ export interface ServiceNowVariableChoice {
 export interface ServiceNowVariable {
   name: string;
   label: string;
-  type?: string;
+  type?: string | number | Record<string, unknown>;
+  question_type?: string | number | Record<string, unknown>;
+  ui_type?: string | number | Record<string, unknown>;
+  field_type?: string | number | Record<string, unknown>;
   mandatory?: boolean;
   default_value?: string;
   instructions?: string;
-  choices?: ServiceNowVariableChoice[];
+  choices?: Array<ServiceNowVariableChoice | Record<string, unknown> | string | number> | Record<string, unknown>;
 }
 
 export interface ServiceNowCatalogItemDetail extends ServiceNowCatalogItem {

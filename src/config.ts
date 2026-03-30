@@ -15,7 +15,14 @@ export const config = {
     password: process.env.SERVICENOW_PASSWORD,
     tokenPath: process.env.SERVICENOW_OAUTH_TOKEN_PATH || "/oauth_token.do",
     tokenAuthStyle: process.env.SERVICENOW_OAUTH_CLIENT_AUTH_STYLE || "auto",
-    grantType: process.env.SERVICENOW_OAUTH_GRANT_TYPE || "auto"
+    grantType: process.env.SERVICENOW_OAUTH_GRANT_TYPE || "auto",
+    requestedForLookupFields: process.env.SERVICENOW_REQUESTED_FOR_LOOKUP_FIELDS
+      ? process.env.SERVICENOW_REQUESTED_FOR_LOOKUP_FIELDS.split(",").map(v => v.trim()).filter(Boolean)
+      : ["email", "user_name"],
+    requestedForCallerFields: process.env.SERVICENOW_REQUESTED_FOR_CALLER_FIELDS
+      ? process.env.SERVICENOW_REQUESTED_FOR_CALLER_FIELDS.split(",").map(v => v.trim()).filter(Boolean)
+      : ["callerUpn"],
+    requestedForFallbackToCallerValue: process.env.SERVICENOW_REQUESTED_FOR_FALLBACK_TO_CALLER_VALUE !== "false"
   },
 
   // Microsoft Entra ID (Azure AD) OAuth 2.0 settings.

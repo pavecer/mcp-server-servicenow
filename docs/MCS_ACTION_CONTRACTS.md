@@ -125,6 +125,8 @@ Tool name: `place_order`
 }
 ```
 
+If `requestedFor` is omitted, the server derives `requested_for` from the authenticated Copilot caller (Entra `preferred_username`/`upn`) and attempts to resolve it to a ServiceNow user.
+
 ### Response JSON
 
 ```json

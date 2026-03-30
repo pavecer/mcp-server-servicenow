@@ -70,7 +70,9 @@ function createCatalogExpressApp(): express.Express {
 
     try {
       const serviceNowAccessToken = req.header("x-servicenow-access-token") || undefined;
-      const items = await runWithRequestContext({ serviceNowAccessToken }, () =>
+      const callerEntraObjectId = res.locals.callerEntraObjectId as string | undefined;
+      const callerUpn = res.locals.callerUpn as string | undefined;
+      const items = await runWithRequestContext({ serviceNowAccessToken, callerEntraObjectId, callerUpn }, () =>
         catalogClient.searchCatalogItems(query.trim(), {
           limit: typeof limit === "number" ? limit : 10,
           catalogSysId: typeof catalogSysId === "string" ? catalogSysId : undefined,
@@ -123,7 +125,9 @@ function createCatalogExpressApp(): express.Express {
 
     try {
       const serviceNowAccessToken = req.header("x-servicenow-access-token") || undefined;
-      const item = await runWithRequestContext({ serviceNowAccessToken }, () =>
+      const callerEntraObjectId = res.locals.callerEntraObjectId as string | undefined;
+      const callerUpn = res.locals.callerUpn as string | undefined;
+      const item = await runWithRequestContext({ serviceNowAccessToken, callerEntraObjectId, callerUpn }, () =>
         catalogClient.getCatalogItem(sysId as string)
       );
 
@@ -182,7 +186,9 @@ function createCatalogExpressApp(): express.Express {
 
     try {
       const serviceNowAccessToken = req.header("x-servicenow-access-token") || undefined;
-      const result = await runWithRequestContext({ serviceNowAccessToken }, () =>
+      const callerEntraObjectId = res.locals.callerEntraObjectId as string | undefined;
+      const callerUpn = res.locals.callerUpn as string | undefined;
+      const result = await runWithRequestContext({ serviceNowAccessToken, callerEntraObjectId, callerUpn }, () =>
         catalogClient.placeOrder(itemSysId, {
           variables,
           quantity: typeof quantity === "number" ? quantity : 1,

@@ -413,7 +413,32 @@ az functionapp function keys list \
 
 ### Caller Identity and ServiceNow Permissions
 
-With Entra OAuth, each caller's Entra identity (`oid`, `preferred_username`) is extracted from the Bearer token and logged. ServiceNow API calls still use the configured integration user (service account). To route ServiceNow calls under a specific user instead, send the ServiceNow token in the `x-servicenow-access-token` header alongside the Entra Bearer token.
+With Entra OAuth, each caller's Entra identity (`oid`, `preferred_username`) is extracted from the Bearer token and logged. ServiceNow API calls still use the configured integration user (service account).
+
+For order placement, `requested_for` is resolved as follows:
+
+1. If `requestedFor` is provided in the tool/API payload, that value is used.
+2. Otherwise the server uses the authenticated caller UPN/email from the Entra token (`preferred_username`/`upn`).
+3. The server first attempts to resolve that identity to a ServiceNow `sys_user.sys_id` (`email` then `user_name`), and falls back to the UPN/email string if no record is found.
+
+To make this work reliably, ensure each Copilot user has a matching ServiceNow user record where `email` (preferred) or `user_name` matches the Entra sign-in value.
+
+This behavior is configurable for different identity mappings:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `SERVICENOW_REQUESTED_FOR_LOOKUP_FIELDS` | `email,user_name` | Comma-separated `sys_user` fields used to resolve caller identity to a ServiceNow user `sys_id`. |
+| `SERVICENOW_REQUESTED_FOR_CALLER_FIELDS` | `callerUpn` | Ordered caller identity sources to try: `callerUpn`, `callerEntraObjectId`. |
+| `SERVICENOW_REQUESTED_FOR_FALLBACK_TO_CALLER_VALUE` | `true` | When `true`, if lookup does not resolve a user record, sends the first caller identity value as `sysparm_requested_for`. |
+
+Example for custom mapping by Entra object ID stored on `sys_user.u_entra_oid`:
+
+```bash
+azd env set SERVICENOW_REQUESTED_FOR_CALLER_FIELDS "callerEntraObjectId"
+azd env set SERVICENOW_REQUESTED_FOR_LOOKUP_FIELDS "u_entra_oid"
+```
+
+To route ServiceNow calls under a specific user token instead of the integration user, send the ServiceNow token in the `x-servicenow-access-token` header alongside the Entra Bearer token.
 
 ## Validate ServiceNow OAuth and Permissions
 

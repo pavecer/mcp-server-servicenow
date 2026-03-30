@@ -10,6 +10,14 @@ interface SearchOptions {
   limit?: number;
 }
 
+interface ServiceNowUserLookupRecord {
+  sys_id?: string;
+  email?: string;
+  user_name?: string;
+}
+
+type CallerField = "callerUpn" | "callerEntraObjectId";
+
 export interface PlaceOrderInput {
   quantity?: number;
   requestedFor?: string;
@@ -18,6 +26,93 @@ export interface PlaceOrderInput {
 
 export class ServiceNowClient {
   private readonly tokenManager = new TokenManager();
+
+  private sanitizeSysparmQueryValue(value: string): string {
+    // ServiceNow encoded queries use ^ as a delimiter, strip it from user-derived values.
+    return value.replace(/\^/g, "").trim();
+  }
+
+  private sanitizeSysparmFieldName(value: string): string {
+    const trimmed = value.trim();
+    return /^[A-Za-z0-9_]+$/.test(trimmed) ? trimmed : "";
+  }
+
+  private getCallerValues(): string[] {
+    const requestContext = getRequestContext();
+    const values: string[] = [];
+
+    for (const fieldName of config.serviceNow.requestedForCallerFields) {
+      const candidateField = fieldName as CallerField;
+      if (candidateField !== "callerUpn" && candidateField !== "callerEntraObjectId") {
+        continue;
+      }
+
+      const rawValue = requestContext?.[candidateField];
+      if (!rawValue) {
+        continue;
+      }
+
+      const normalized = this.sanitizeSysparmQueryValue(rawValue);
+      if (normalized) {
+        values.push(normalized);
+      }
+    }
+
+    return [...new Set(values)];
+  }
+
+  private async resolveRequestedFor(client: AxiosInstance, explicitRequestedFor?: string): Promise<string | undefined> {
+    const requestedFor = explicitRequestedFor?.trim();
+    if (requestedFor) {
+      return requestedFor;
+    }
+
+    const callerValues = this.getCallerValues();
+    if (callerValues.length === 0) {
+      return undefined;
+    }
+
+    const lookupFields = config.serviceNow.requestedForLookupFields
+      .map(field => this.sanitizeSysparmFieldName(field))
+      .filter(Boolean);
+
+    if (lookupFields.length > 0) {
+      const lookupClauses: string[] = [];
+      for (const callerValue of callerValues) {
+        for (const field of lookupFields) {
+          lookupClauses.push(`${field}=${callerValue}`);
+        }
+      }
+
+      if (lookupClauses.length > 0) {
+        const sysparmQuery = `active=true^${lookupClauses.join("^OR")}`;
+
+        try {
+          const response = await client.get<{ result: ServiceNowUserLookupRecord[] }>("/api/now/table/sys_user", {
+            params: {
+              sysparm_query: sysparmQuery,
+              sysparm_fields: "sys_id,email,user_name",
+              sysparm_limit: 1
+            }
+          });
+
+          const resolvedSysId = response.data.result?.[0]?.sys_id;
+          if (resolvedSysId) {
+            return resolvedSysId;
+          }
+        } catch {
+          // Fall through to caller value fallback.
+        }
+      }
+    }
+
+    if (!config.serviceNow.requestedForFallbackToCallerValue) {
+      return undefined;
+    }
+
+    // Use first configured caller value (for example callerUpn) when lookup does not resolve.
+    return callerValues[0];
+  }
 
   private async getClient(): Promise<AxiosInstance> {
     const callerToken = getRequestContext()?.serviceNowAccessToken;
@@ -68,14 +163,15 @@ export class ServiceNowClient {
 
   async placeOrder(itemSysId: string, input: PlaceOrderInput): Promise<ServiceNowOrderResult> {
     const client = await this.getClient();
+    const resolvedRequestedFor = await this.resolveRequestedFor(client, input.requestedFor);
 
     const payload: Record<string, unknown> = {
       sysparm_quantity: input.quantity ?? 1,
       variables: input.variables
     };
 
-    if (input.requestedFor) {
-      payload.sysparm_requested_for = input.requestedFor;
+    if (resolvedRequestedFor) {
+      payload.sysparm_requested_for = resolvedRequestedFor;
     }
 
     const response = await client.post<{ result: ServiceNowOrderResult }>(
