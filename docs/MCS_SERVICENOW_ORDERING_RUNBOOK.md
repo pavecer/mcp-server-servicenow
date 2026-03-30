@@ -101,6 +101,8 @@ In `SN-04-SubmitOrder`:
    - `itemSysId = selectedItemSysId`
    - `variables = cleaned payload`
    - `quantity = 1`
+   - `requestedFor = System.User.Email` (recommended)
+   - optionally `requestedFor = user email/sys_id` when your Entra sign-in value does not match ServiceNow `email` or `user_name`
 5. Parse result:
    - success -> render confirmation adaptive card from result.
    - failure -> handoff to fallback topic.

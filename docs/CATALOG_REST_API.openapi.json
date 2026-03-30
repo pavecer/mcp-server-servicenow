@@ -174,7 +174,7 @@
                 },
                 "requestedFor": {
                   "type": "string",
-                  "description": "Optional sys_id or email of the user the item is ordered for"
+                  "description": "Optional sys_id, user_name, or email of the user the item is ordered for. If omitted, the server attempts to use the authenticated Copilot caller UPN/email."
                 }
               }
             }
