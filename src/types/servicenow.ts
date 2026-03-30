@@ -23,7 +23,7 @@ export interface ServiceNowVariableChoice {
 
 export interface ServiceNowVariable {
   name: string;
-  label: string;
+  label?: string;
   type?: string | number | Record<string, unknown>;
   question_type?: string | number | Record<string, unknown>;
   ui_type?: string | number | Record<string, unknown>;
@@ -31,7 +31,18 @@ export interface ServiceNowVariable {
   mandatory?: boolean;
   default_value?: string;
   instructions?: string;
-  choices?: Array<ServiceNowVariableChoice | Record<string, unknown> | string | number> | Record<string, unknown>;
+  help_text?: string;
+  hint?: string;
+  description?: string;
+  visible?: boolean;
+  readonly?: boolean;
+  choices?: Array<ServiceNowVariableChoice | Record<string, unknown> | string | number> | Record<string, unknown> | string;
+  options?: Array<ServiceNowVariableChoice | Record<string, unknown> | string | number> | Record<string, unknown> | string;
+  variables?: ServiceNowVariable[];
+  children?: ServiceNowVariable[];
+  questions?: ServiceNowVariable[];
+  fields?: ServiceNowVariable[];
+  [key: string]: unknown;
 }
 
 export interface ServiceNowCatalogItemDetail extends ServiceNowCatalogItem {
