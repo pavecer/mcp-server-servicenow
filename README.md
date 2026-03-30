@@ -417,7 +417,7 @@ With Entra OAuth, each caller's Entra identity (`oid`, `preferred_username`) is 
 
 For order placement, `requested_for` is resolved as follows:
 
-1. If `requestedFor` is provided in the tool/API payload, that value is used.
+1. If `requestedFor` is provided in the tool/API payload, the server first tries to resolve it through the configured ServiceNow `sys_user` lookup fields and uses the matching `sys_id` when found.
 2. Otherwise the server uses the authenticated caller UPN/email from the Entra token (`preferred_username`/`upn`).
 3. The server first attempts to resolve that identity to a ServiceNow `sys_user.sys_id` (`email` then `user_name`), and falls back to the UPN/email string if no record is found.
 

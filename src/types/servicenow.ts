@@ -44,3 +44,20 @@ export interface ServiceNowOrderResult {
   sys_id?: string;
   table?: string;
 }
+
+export interface RequestedForDiagnostics {
+  source: "explicit" | "caller_lookup" | "caller_fallback" | "none";
+  explicitRequestedForProvided: boolean;
+  resolvedRequestedFor: string | null;
+  callerUpn: string | null;
+  callerEntraObjectId: string | null;
+  callerValues: string[];
+  lookupFields: string[];
+  matchedLookupField: string | null;
+  matchedLookupValue: string | null;
+}
+
+export interface ServiceNowPlaceOrderResponse {
+  result: ServiceNowOrderResult;
+  requestedForDiagnostics: RequestedForDiagnostics;
+}

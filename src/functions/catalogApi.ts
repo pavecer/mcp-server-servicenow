@@ -188,7 +188,7 @@ function createCatalogExpressApp(): express.Express {
       const serviceNowAccessToken = req.header("x-servicenow-access-token") || undefined;
       const callerEntraObjectId = res.locals.callerEntraObjectId as string | undefined;
       const callerUpn = res.locals.callerUpn as string | undefined;
-      const result = await runWithRequestContext({ serviceNowAccessToken, callerEntraObjectId, callerUpn }, () =>
+      const response = await runWithRequestContext({ serviceNowAccessToken, callerEntraObjectId, callerUpn }, () =>
         catalogClient.placeOrder(itemSysId, {
           variables,
           quantity: typeof quantity === "number" ? quantity : 1,
@@ -197,17 +197,23 @@ function createCatalogExpressApp(): express.Express {
       );
 
       const confirmationAdaptiveCard = buildOrderConfirmationAdaptiveCard(
-        result,
+        response.result,
         config.serviceNow.instanceUrl
       );
 
-      res.status(201).set("Content-Type", "application/json").json({
+      const payload: Record<string, unknown> = {
         success: true,
-        requestNumber: result.request_number,
-        requestId: result.request_id ?? null,
+        requestNumber: response.result.request_number,
+        requestId: response.result.request_id ?? null,
         // Adaptive Card JSON — send as application/vnd.microsoft.card.adaptive.
         confirmationAdaptiveCard
-      });
+      };
+
+      if (config.serviceNow.requestedForDiagnosticsEnabled) {
+        payload.requestedForDiagnostics = response.requestedForDiagnostics;
+      }
+
+      res.status(201).set("Content-Type", "application/json").json(payload);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Unknown error";
       res.status(502).json({ error: "upstream_error", error_description: msg });
