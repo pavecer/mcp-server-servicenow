@@ -2,7 +2,9 @@
 
 This project hosts a stateless MCP server for ServiceNow on Azure Functions.
 
-For reliable first-time deployments (including cross-tenant OAuth), see [AGENT_FIRST_TIME_DEPLOYMENT_RUNBOOK.md](AGENT_FIRST_TIME_DEPLOYMENT_RUNBOOK.md).
+⚠️ **Security Notice**: If you're contributing to this repository, please review [SECURITY.md](SECURITY.md) to understand what credentials and files should never be committed.
+
+For reliable first-time deployments (including cross-tenant OAuth), see the deployment documentation in your local `.private-docs/` directory (internal only).
 For Copilot Studio topic orchestration and Adaptive Card ordering flow setup, see:
 - [docs/MCS_SERVICENOW_ORDERING_RUNBOOK.md](docs/MCS_SERVICENOW_ORDERING_RUNBOOK.md)
 - [docs/MCS_ACTION_CONTRACTS.md](docs/MCS_ACTION_CONTRACTS.md)
@@ -20,9 +22,25 @@ It provides four MCP tools:
 - Runtime: Azure Functions v4 (Node.js 20, Flex Consumption FC1)
 - MCP transport: Streamable HTTP in stateless mode
 - **MCP authentication**: OAuth 2.0 via Microsoft Entra ID (primary) — each Copilot Studio user signs in individually
+- **Identity delegation**: When a user places an order, their Entra identity is automatically resolved to a ServiceNow user and assigned to the created request via post-order correction
 - ServiceNow auth: OAuth 2.0 password grant with a shared integration user
 - Secrets: client secrets stored in Azure Key Vault and referenced by Function App app settings
-- Caller access model: all Service Catalog calls run under the configured ServiceNow integration user. If `x-servicenow-access-token` header is provided, that user token is used instead.
+- Caller access model: all Service Catalog API calls use the integration user's token. User identity is resolved for `requested_for` assignment on orders only.
+
+### How Delegated Identity Works
+
+When a user places an order through Copilot Studio:
+
+1. Copilot Studio sends the user's Entra bearer token (with `upn` / `email` claim) to the MCP server
+2. The MCP server validates the token and extracts the caller's identity
+3. The MCP server obtains a ServiceNow token for the integration user (password grant)
+4. Before placing the order, the MCP server resolves the caller's identity to a ServiceNow `sys_user` record via email/user_name lookup
+5. The MCP server calls ServiceNow's `order_now` endpoint with the resolved user sys_id
+6. Because ServiceNow's `order_now` API ignores the `sysparm_requested_for` parameter, the order is initially created under the integration user
+7. **Post-order correction**: The MCP server immediately PATCHes the created `sc_request` to set `requested_for` to the actual caller's user record
+8. The user sees the order confirmation with their identity correctly assigned
+
+This ensures that all orders placed by Copilot users are correctly attributed to their actual ServiceNow user identity, even though the integration user handles the authentication with ServiceNow.
 
 ## Prerequisites
 
@@ -415,11 +433,49 @@ az functionapp function keys list \
 
 With Entra OAuth, each caller's Entra identity (`oid`, `preferred_username`) is extracted from the Bearer token and logged. ServiceNow API calls still use the configured integration user (service account).
 
+## Authentication Flow with Delegated Identity
+
+The MCP server implements a delegated identity model where the authenticated Copilot Studio user's identity is resolved to a ServiceNow user and assigned to the created request. Here's the complete flow:
+
+```mermaid
+sequenceDiagram
+    actor User as Copilot Studio User<br/>(admin@tenant.onmicrosoft.com)
+    participant CS as Copilot Studio<br/>Power Virtual Agent
+    participant MCP as ServiceNow MCP<br/>Azure Functions
+    participant SN as ServiceNow<br/>Instance
+    participant ENTRA as Microsoft<br/>Entra ID
+
+    User->>CS: 1. Initiate order flow
+    CS->>ENTRA: 2. Obtain delegated Entra token<br/>(user's identity)
+    ENTRA-->>CS: 3. Entra bearer token<br/>(upn, oid)
+    CS->>MCP: 4. place_order request<br/>+ Bearer token + requestedFor
+    MCP->>MCP: 5a. Extract caller identity<br/>from Entra token
+    MCP->>SN: 5b. ServiceNow OAuth:<br/>Get integration_user token<br/>(password grant)
+    SN-->>MCP: 5c. Integration user<br/>bearer token
+    MCP->>SN: 6. Resolve requestedFor<br/>via sys_user lookup<br/>(email or user_name)
+    SN-->>MCP: 7. Return user sys_id<br/>(6816f79cc0a8...)
+    MCP->>SN: 8a. POST order_now<br/>with resolved user sys_id
+    SN-->>MCP: 8b. Order created<br/>(req_sys_id, req_number)
+    Note over MCP,SN: ⚠️ ServiceNow ignores<br/>sysparm_requested_for<br/>during order_now
+    MCP->>SN: 9. PATCH sc_request<br/>to correct requested_for<br/>to resolved user sys_id
+    SN-->>MCP: 10. Patch confirmed<br/>requested_for = david.vecer
+    MCP-->>CS: 11. Return confirmation<br/>with correct user identity
+    CS-->>User: 12. Order placed<br/>under your identity
+```
+
+**Key behavior changes with this flow:**
+
+1. **User identity resolution**: The caller's Entra identity (email/UPN from the Bearer token) is automatically resolved to a ServiceNow `sys_user` record.
+2. **Post-order correction**: Because ServiceNow's `order_now` endpoint ignores the `sysparm_requested_for` parameter, the MCP server automatically corrects the `requested_for` field via a PATCH call immediately after order creation.
+3. **Integration user isolation**: All ServiceNow API calls use the integration user's token (obtained via password grant). The integration user must have read access to `sys_user` and write access to `sc_request` to enable this flow.
+
+### Identity Resolution Configuration
+
 For order placement, `requested_for` is resolved as follows:
 
-1. If `requestedFor` is provided in the tool/API payload, the server first tries to resolve it through the configured ServiceNow `sys_user` lookup fields and uses the matching `sys_id` when found.
+1. If `requestedFor` is provided in the tool/API payload, the server attempts to resolve it through the configured ServiceNow `sys_user` lookup fields and uses the matching `sys_id` when found.
 2. Otherwise the server uses the authenticated caller UPN/email from the Entra token (`preferred_username`/`upn`).
-3. The server first attempts to resolve that identity to a ServiceNow `sys_user.sys_id` (`email` then `user_name`), and falls back to the UPN/email string if no record is found.
+3. The server attempts to resolve that identity to a ServiceNow `sys_user.sys_id` (checking `email` then `user_name` fields), and falls back to the UPN/email string if no record is found.
 
 To make this work reliably, ensure each Copilot user has a matching ServiceNow user record where `email` (preferred) or `user_name` matches the Entra sign-in value.
 
@@ -438,6 +494,17 @@ azd env set SERVICENOW_REQUESTED_FOR_CALLER_FIELDS "callerEntraObjectId"
 azd env set SERVICENOW_REQUESTED_FOR_LOOKUP_FIELDS "u_entra_oid"
 ```
 
+### Integration User Permissions
+
+For the delegated identity flow to work, the integration user requires:
+
+- **Read** on `sys_user` table (to resolve caller identity to user records)
+- **Read** on `sc_request` table (to fetch created request details)
+- **Write** on `sc_request` table (to patch the `requested_for` field after order creation)
+- All standard catalog and ordering permissions (`catalog` and/or `itil` roles)
+
+The MCP server will log a warning if a post-order correction PATCH fails, but the order itself will not be rolled back.
+
 To route ServiceNow calls under a specific user token instead of the integration user, send the ServiceNow token in the `x-servicenow-access-token` header alongside the Entra Bearer token.
 
 ## Validate ServiceNow OAuth and Permissions
@@ -450,6 +517,10 @@ Default behavior:
 - Otherwise validates configured ServiceNow integration user credentials (resource owner password credentials grant when `SERVICENOW_USERNAME`/`PASSWORD` are set; falls back to `client_credentials`).
 - Checks token/auth, catalog list access, and item detail access.
 - Skips `order_now` by default to avoid accidental request creation.
+
+The validation also confirms that the integration user has the necessary permissions for delegated identity support:
+- **Read** on `sys_user` (to resolve caller identity)
+- **Write** on `sc_request` (to patch `requested_for` after order creation)
 
 Recommended first validation call:
 
@@ -531,6 +602,16 @@ Network-level protection (VNet integration / Private Endpoints) is also recommen
 - Entra auth is active but no Bearer token was sent. Ensure Copilot Studio is configured with OAuth 2.0 and the connection has been created.
 - If testing locally, set `ENTRA_AUTH_DISABLED=true` in `local.settings.json`.
 
+### Orders are created but `requested_for` is not corrected
+
+This indicates the post-order PATCH is failing. Common causes:
+
+- **Integration user lacks `write` on `sc_request`**: Add write permission on the `sc_request` table for the ServiceNow integration user.
+- **User lookup is failing**: Verify that the caller's Entra email matches a ServiceNow `sys_user.email` or `sys_user.user_name` field. View Application Insights traces for `[ServiceNowClient.placeOrder]` to see the resolved user sys_id.
+- **ServiceNow instance restrictions**: Some ServiceNow instances may have field-level security or business rules preventing `requested_for` updates after order creation. Check ServiceNow audit logs for PATCH failures.
+
+Check Application Insights for the telemetry key `[ServiceNowClient.placeOrder.requestedForPatchFailed]` to see detailed error messages.
+
 ### Dynamic discovery fails in Copilot Studio
 
 - Verify `ENTRA_TENANT_ID` and `ENTRA_CLIENT_ID` are set in Function App settings.
@@ -547,6 +628,12 @@ Network-level protection (VNet integration / Private Endpoints) is also recommen
 
 - Adjust the query text.
 - Ensure the ServiceNow integration user has catalog visibility (role `catalog` or `itil`).
+
+### User lookup is not resolving the caller's identity
+
+- Verify that the caller's Entra `upn` / `email` matches a ServiceNow `sys_user.email` or `sys_user.user_name` field (case-insensitive).
+- Check `SERVICENOW_REQUESTED_FOR_LOOKUP_FIELDS` configuration — by default it searches `email,user_name`.
+- Enable diagnostic logging in Application Insights and filter traces for `[ServiceNowClient.lookupServiceNowUser]` to see which fields were checked and what values matched.
 
 ### Grant type reference
 
