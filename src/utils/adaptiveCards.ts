@@ -37,30 +37,138 @@ function toAdaptiveText(value?: string): string {
   return normalized;
 }
 
+function readStringFromCandidate(
+  candidate: unknown,
+  keys: string[],
+  depth = 0
+): string | undefined {
+  if (candidate === undefined || candidate === null || depth > 2) {
+    return undefined;
+  }
+
+  if (typeof candidate === "string" || typeof candidate === "number") {
+    const value = String(candidate).trim();
+    return value ? value : undefined;
+  }
+
+  if (typeof candidate !== "object") {
+    return undefined;
+  }
+
+  const record = candidate as Record<string, unknown>;
+  for (const key of keys) {
+    const value = readStringFromCandidate(record[key], keys, depth + 1);
+    if (value) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+function readBooleanCandidate(candidate: unknown): boolean | undefined {
+  if (typeof candidate === "boolean") {
+    return candidate;
+  }
+
+  if (typeof candidate === "string") {
+    const normalized = candidate.trim().toLowerCase();
+    if (["true", "1", "yes", "y", "on"].includes(normalized)) {
+      return true;
+    }
+    if (["false", "0", "no", "n", "off"].includes(normalized)) {
+      return false;
+    }
+  }
+
+  if (typeof candidate === "number") {
+    return candidate !== 0;
+  }
+
+  if (candidate && typeof candidate === "object") {
+    const record = candidate as Record<string, unknown>;
+    return readBooleanCandidate(record.value ?? record.display_value ?? record.displayValue);
+  }
+
+  return undefined;
+}
+
+function getVariableLabel(variable: ServiceNowVariable): string {
+  return (
+    toAdaptiveText(
+      readStringFromCandidate(variable.label, ["label", "display_value", "displayValue"])
+      ?? readStringFromCandidate(variable, ["label", "question_text", "questionText", "title", "text", "name"])
+    )
+    || variable.name
+  );
+}
+
+function getVariableInstructions(variable: ServiceNowVariable): string {
+  return toAdaptiveText(
+    readStringFromCandidate(
+      variable,
+      ["instructions", "help_text", "helpText", "hint", "description", "tooltip", "placeholder"]
+    )
+  );
+}
+
+function getVariableDefaultValue(variable: ServiceNowVariable): string {
+  return (
+    readStringFromCandidate(
+      variable,
+      ["default_value", "defaultValue", "value", "display_value", "displayValue"]
+    )
+    ?? ""
+  );
+}
+
+function parseChoiceString(rawChoices: string): Array<{ title: string; value: string }> {
+  const trimmed = rawChoices.trim();
+  if (!trimmed) {
+    return [];
+  }
+
+  if ((trimmed.startsWith("[") && trimmed.endsWith("]")) || (trimmed.startsWith("{") && trimmed.endsWith("}"))) {
+    try {
+      return normalizeChoices({ choices: JSON.parse(trimmed) } as ServiceNowVariable);
+    } catch {
+      // Fall through to line parsing.
+    }
+  }
+
+  return trimmed
+    .split(/\r?\n/)
+    .map(entry => entry.trim())
+    .filter(Boolean)
+    .map(entry => ({ title: toAdaptiveText(entry) || entry, value: entry }));
+}
+
+function getRawChoices(variable: ServiceNowVariable): unknown {
+  return variable.choices
+    ?? variable.options
+    ?? variable.choice_list
+    ?? variable.choiceList
+    ?? variable.question_choices
+    ?? variable.questionChoices
+    ?? variable.select_options
+    ?? variable.selectOptions;
+}
+
 function normalizeVariableType(variable: ServiceNowVariable): string {
   const candidates = [
     variable.type,
     variable.question_type,
     variable.ui_type,
-    variable.field_type
+    variable.field_type,
+    variable.render_type,
+    variable.variable_type,
+    variable.catalog_type
   ];
 
   for (const candidate of candidates) {
-    if (candidate === undefined || candidate === null) {
-      continue;
-    }
-
-    if (typeof candidate === "string" || typeof candidate === "number") {
-      return String(candidate).trim().toLowerCase();
-    }
-
-    if (typeof candidate === "object") {
-      const raw = (candidate as Record<string, unknown>).value
-        ?? (candidate as Record<string, unknown>).name
-        ?? (candidate as Record<string, unknown>).type;
-      if (typeof raw === "string" || typeof raw === "number") {
-        return String(raw).trim().toLowerCase();
-      }
+    const normalized = readStringFromCandidate(candidate, ["value", "name", "type", "display_value", "displayValue"]);
+    if (normalized) {
+      return normalized.toLowerCase();
     }
   }
 
@@ -68,9 +176,13 @@ function normalizeVariableType(variable: ServiceNowVariable): string {
 }
 
 function normalizeChoices(variable: ServiceNowVariable): Array<{ title: string; value: string }> {
-  const rawChoices = variable.choices;
+  const rawChoices = getRawChoices(variable);
   if (!rawChoices) {
     return [];
+  }
+
+  if (typeof rawChoices === "string") {
+    return parseChoiceString(rawChoices);
   }
 
   if (Array.isArray(rawChoices)) {
@@ -137,7 +249,104 @@ function normalizeChoices(variable: ServiceNowVariable): Array<{ title: string; 
 }
 
 function isMultiSelectType(type: string): boolean {
-  return ["21", "33", "multiple", "multiple_choice", "checkbox", "check_box", "multi_select"].includes(type);
+  return [
+    "21",
+    "33",
+    "multiple",
+    "multiple_choice",
+    "checkbox",
+    "checkboxes",
+    "check_box",
+    "multi_select",
+    "multi-select"
+  ].includes(type);
+}
+
+function isStaticTextType(type: string): boolean {
+  return [
+    "11",
+    "label",
+    "label_only",
+    "formatted_text",
+    "html",
+    "rich_text_label",
+    "container_start",
+    "begin_split",
+    "split"
+  ].includes(type);
+}
+
+function isContainerEndType(type: string): boolean {
+  return ["container_end", "end_split", "split_end"].includes(type);
+}
+
+function isMultilineType(type: string, variable: ServiceNowVariable): boolean {
+  if (["2", "textarea", "multi_line", "multi-line", "multiline", "multi_line_text"].includes(type)) {
+    return true;
+  }
+
+  return readBooleanCandidate(variable.is_multiline)
+    ?? readBooleanCandidate(variable.multiline)
+    ?? readBooleanCandidate(variable.multi_line)
+    ?? false;
+}
+
+function isTruthyValue(value: string): boolean {
+  return ["true", "1", "yes", "y", "on"].includes(value.trim().toLowerCase());
+}
+
+function buildChoicePlaceholder(label: string, instructions: string): string {
+  if (instructions) {
+    return instructions;
+  }
+
+  return /^(select|choose)\b/i.test(label) ? label : `Select ${label}`;
+}
+
+function looksLikeVariableRecord(value: unknown): value is ServiceNowVariable {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+  return ["name", "label", "type", "question_type", "ui_type", "field_type"].some(key => key in record);
+}
+
+function collectVariables(variables?: ServiceNowVariable[]): ServiceNowVariable[] {
+  if (!variables || variables.length === 0) {
+    return [];
+  }
+
+  const result: ServiceNowVariable[] = [];
+  const seen = new Set<ServiceNowVariable>();
+
+  const visit = (variable: ServiceNowVariable) => {
+    if (seen.has(variable)) {
+      return;
+    }
+
+    seen.add(variable);
+    result.push(variable);
+
+    for (const key of ["variables", "children", "questions", "fields"] as const) {
+      const nested = variable[key];
+      if (!Array.isArray(nested)) {
+        continue;
+      }
+
+      for (const entry of nested) {
+        if (looksLikeVariableRecord(entry)) {
+          visit(entry);
+        }
+      }
+    }
+  };
+
+  for (const variable of variables) {
+    visit(variable);
+  }
+
+  return result;
 }
 
 /**
@@ -242,10 +451,30 @@ export function buildCatalogItemSelectionAdaptiveCard(
 function buildVariableInput(variable: ServiceNowVariable): Record<string, unknown> | null {
   const type = normalizeVariableType(variable);
   const choices = normalizeChoices(variable);
-  const normalizedLabel = toAdaptiveText(variable.label) || variable.name;
-  const normalizedInstructions = toAdaptiveText(variable.instructions);
+  const normalizedLabel = getVariableLabel(variable);
+  const normalizedInstructions = getVariableInstructions(variable);
+  const defaultValue = getVariableDefaultValue(variable);
   const label = normalizedLabel + (variable.mandatory ? " *" : "");
   const required = variable.mandatory ?? false;
+
+  if (variable.visible === false || isContainerEndType(type)) {
+    return null;
+  }
+
+  if (isStaticTextType(type)) {
+    const staticText = normalizedInstructions || normalizedLabel;
+    if (!staticText) {
+      return null;
+    }
+
+    return {
+      type: "TextBlock",
+      text: staticText,
+      wrap: true,
+      spacing: "Small",
+      weight: type === "11" || type === "label" || type === "label_only" ? "Bolder" : "Default"
+    };
+  }
 
   // Dropdown / select
   if (choices.length > 0 || ["14", "18", "21", "select", "lookup", "choice"].includes(type)) {
@@ -253,8 +482,8 @@ function buildVariableInput(variable: ServiceNowVariable): Record<string, unknow
       type: "Input.ChoiceSet",
       id: variable.name,
       label,
-      placeholder: normalizedInstructions || `Select ${normalizedLabel}`,
-      value: variable.default_value ?? "",
+      placeholder: buildChoicePlaceholder(normalizedLabel, normalizedInstructions),
+      value: defaultValue,
       choices,
       isMultiSelect: isMultiSelectType(type),
       style: isMultiSelectType(type) ? "expanded" : "compact",
@@ -269,7 +498,7 @@ function buildVariableInput(variable: ServiceNowVariable): Record<string, unknow
       id: variable.name,
       label,
       title: normalizedInstructions || normalizedLabel,
-      value: variable.default_value === "true" ? "true" : "false"
+      value: isTruthyValue(defaultValue) ? "true" : "false"
     };
   }
 
@@ -279,7 +508,7 @@ function buildVariableInput(variable: ServiceNowVariable): Record<string, unknow
       type: "Input.Date",
       id: variable.name,
       label,
-      value: variable.default_value ?? "",
+      value: defaultValue,
       isRequired: required
     };
   }
@@ -290,19 +519,19 @@ function buildVariableInput(variable: ServiceNowVariable): Record<string, unknow
       type: "Input.Date",
       id: variable.name,
       label,
-      value: variable.default_value ? variable.default_value.split(" ")[0] : "",
+      value: defaultValue ? defaultValue.split(" ")[0] : "",
       isRequired: required
     };
   }
 
   // Multi-line text
-  if (type === "2") {
+  if (isMultilineType(type, variable)) {
     return {
       type: "Input.Text",
       id: variable.name,
       label,
       placeholder: normalizedInstructions || `Enter ${normalizedLabel}`,
-      value: variable.default_value ?? "",
+      value: defaultValue,
       isMultiline: true,
       isRequired: required
     };
@@ -315,7 +544,7 @@ function buildVariableInput(variable: ServiceNowVariable): Record<string, unknow
       id: variable.name,
       label,
       placeholder: normalizedInstructions || `Enter ${normalizedLabel}`,
-      value: variable.default_value ? Number(variable.default_value) : undefined,
+      value: defaultValue ? Number(defaultValue) : undefined,
       isRequired: required
     };
   }
@@ -326,7 +555,7 @@ function buildVariableInput(variable: ServiceNowVariable): Record<string, unknow
     id: variable.name,
     label,
     placeholder: normalizedInstructions || `Enter ${normalizedLabel}`,
-    value: variable.default_value ?? "",
+    value: defaultValue,
     isRequired: required
   };
 }
@@ -368,7 +597,9 @@ export function buildOrderFormAdaptiveCard(item: ServiceNowCatalogItemDetail): R
     });
   }
 
-  if (item.variables && item.variables.length > 0) {
+  const variables = collectVariables(item.variables);
+
+  if (variables.length > 0) {
     body.push({
       type: "TextBlock",
       text: "Order Details",
@@ -376,7 +607,7 @@ export function buildOrderFormAdaptiveCard(item: ServiceNowCatalogItemDetail): R
       spacing: "Medium"
     });
 
-    for (const variable of item.variables) {
+    for (const variable of variables) {
       const input = buildVariableInput(variable);
       if (input) {
         body.push(input);
