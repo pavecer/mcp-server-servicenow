@@ -22,7 +22,8 @@ export const config = {
     requestedForCallerFields: process.env.SERVICENOW_REQUESTED_FOR_CALLER_FIELDS
       ? process.env.SERVICENOW_REQUESTED_FOR_CALLER_FIELDS.split(",").map(v => v.trim()).filter(Boolean)
       : ["callerUpn"],
-    requestedForFallbackToCallerValue: process.env.SERVICENOW_REQUESTED_FOR_FALLBACK_TO_CALLER_VALUE !== "false"
+    requestedForFallbackToCallerValue: process.env.SERVICENOW_REQUESTED_FOR_FALLBACK_TO_CALLER_VALUE !== "false",
+    requestedForDiagnosticsEnabled: process.env.SERVICENOW_REQUESTED_FOR_DIAGNOSTICS === "true"
   },
 
   // Microsoft Entra ID (Azure AD) OAuth 2.0 settings.

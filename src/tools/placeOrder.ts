@@ -39,27 +39,33 @@ export function registerPlaceOrderTool(server: McpServer): void {
         )
     },
     async ({ itemSysId, variables, quantity, requestedFor }) => {
-      const result = await client.placeOrder(itemSysId, {
+      const response = await client.placeOrder(itemSysId, {
         variables,
         quantity,
         requestedFor
       });
 
       const adaptiveCard = buildOrderConfirmationAdaptiveCard(
-        result,
+        response.result,
         config.serviceNow.instanceUrl
       );
+
+      const payload: Record<string, unknown> = {
+        success: true,
+        requestNumber: response.result.request_number,
+        requestId: response.result.request_id ?? null,
+        adaptiveCard
+      };
+
+      if (config.serviceNow.requestedForDiagnosticsEnabled) {
+        payload.requestedForDiagnostics = response.requestedForDiagnostics;
+      }
 
       return {
         content: [
           {
             type: "text" as const,
-            text: JSON.stringify({
-              success: true,
-              requestNumber: result.request_number,
-              requestId: result.request_id ?? null,
-              adaptiveCard
-            }, null, 2)
+            text: JSON.stringify(payload, null, 2)
           }
         ]
       };

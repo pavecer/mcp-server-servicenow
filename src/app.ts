@@ -93,6 +93,7 @@ export function createMcpExpressApp(): express.Express {
     // so MCP clients can discover the authorization server automatically.
     const resourceMetadataUrl = `${req.protocol}://${req.get("host")}/.well-known/oauth-protected-resource`;
     const authHeader = req.header("Authorization") || req.header("authorization") || "";
+
     if (!authHeader.startsWith("Bearer ")) {
       res
         .status(401)
@@ -117,6 +118,7 @@ export function createMcpExpressApp(): express.Express {
       );
       res.locals.callerEntraObjectId = payload.oid;
       res.locals.callerUpn = payload.preferred_username || payload.upn;
+
       next();
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : "unknown error";
