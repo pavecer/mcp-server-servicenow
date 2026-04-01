@@ -23,7 +23,11 @@ export const config = {
       ? process.env.SERVICENOW_REQUESTED_FOR_CALLER_FIELDS.split(",").map(v => v.trim()).filter(Boolean)
       : ["callerUpn"],
     requestedForFallbackToCallerValue: process.env.SERVICENOW_REQUESTED_FOR_FALLBACK_TO_CALLER_VALUE !== "false",
-    requestedForDiagnosticsEnabled: process.env.SERVICENOW_REQUESTED_FOR_DIAGNOSTICS === "true"
+    requestedForDiagnosticsEnabled: process.env.SERVICENOW_REQUESTED_FOR_DIAGNOSTICS === "true",
+    // When true, all ServiceNow API calls must use a caller-provided ServiceNow
+    // bearer token (x-servicenow-access-token). This enforces ServiceNow ACLs for
+    // each end user and prevents fallback to a shared integration identity.
+    requireCallerAccessToken: process.env.SERVICENOW_REQUIRE_CALLER_ACCESS_TOKEN !== "false"
   },
 
   // Microsoft Entra ID (Azure AD) OAuth 2.0 settings.

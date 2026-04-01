@@ -276,6 +276,12 @@ export class ServiceNowClient {
 
   private async getClient(): Promise<AxiosInstance> {
     const callerToken = getRequestContext()?.serviceNowAccessToken;
+    if (config.serviceNow.requireCallerAccessToken && !callerToken) {
+      throw new Error(
+        "ServiceNow caller access token is required. Provide x-servicenow-access-token so ServiceNow ACLs are enforced per user."
+      );
+    }
+
     const token = callerToken || await this.tokenManager.getAccessToken();
 
     return axios.create({
