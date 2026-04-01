@@ -154,8 +154,19 @@ function getRawChoices(variable: ServiceNowVariable): unknown {
     ?? variable.selectOptions;
 }
 
+function canonicalizeVariableType(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/([a-z])([A-Z])/g, "$1_$2")
+    .replace(/[\s-]+/g, "_");
+}
+
 function normalizeVariableType(variable: ServiceNowVariable): string {
   const candidates = [
+    variable.friendly_type,
+    variable.display_type,
+    variable.containerType,
     variable.type,
     variable.question_type,
     variable.ui_type,
@@ -168,7 +179,7 @@ function normalizeVariableType(variable: ServiceNowVariable): string {
   for (const candidate of candidates) {
     const normalized = readStringFromCandidate(candidate, ["value", "name", "type", "display_value", "displayValue"]);
     if (normalized) {
-      return normalized.toLowerCase();
+      return canonicalizeVariableType(normalized);
     }
   }
 
@@ -252,8 +263,6 @@ function isMultiSelectType(type: string): boolean {
   return [
     "21",
     "33",
-    "multiple",
-    "multiple_choice",
     "checkbox",
     "checkboxes",
     "check_box",
@@ -271,6 +280,7 @@ function isStaticTextType(type: string): boolean {
     "html",
     "rich_text_label",
     "container_start",
+    "checkbox_container",
     "begin_split",
     "split"
   ].includes(type);
@@ -281,7 +291,7 @@ function isContainerEndType(type: string): boolean {
 }
 
 function isMultilineType(type: string, variable: ServiceNowVariable): boolean {
-  if (["2", "textarea", "multi_line", "multi-line", "multiline", "multi_line_text"].includes(type)) {
+  if (["2", "textarea", "multi_line", "multiline", "multi_line_text"].includes(type)) {
     return true;
   }
 
@@ -461,6 +471,20 @@ function buildVariableInput(variable: ServiceNowVariable): Record<string, unknow
     return null;
   }
 
+  if (["checkbox_container", "container_start"].includes(type)) {
+    if (!normalizedLabel) {
+      return null;
+    }
+
+    return {
+      type: "TextBlock",
+      text: normalizedLabel,
+      wrap: true,
+      spacing: "Medium",
+      weight: "Bolder"
+    };
+  }
+
   if (isStaticTextType(type)) {
     const staticText = normalizedInstructions || normalizedLabel;
     if (!staticText) {
@@ -492,13 +516,15 @@ function buildVariableInput(variable: ServiceNowVariable): Record<string, unknow
   }
 
   // Boolean / checkbox
-  if (["5", "boolean"].includes(type)) {
+  if (["5", "7", "boolean", "checkbox", "check_box"].includes(type)) {
     return {
       type: "Input.Toggle",
       id: variable.name,
-      label,
       title: normalizedInstructions || normalizedLabel,
-      value: isTruthyValue(defaultValue) ? "true" : "false"
+      value: isTruthyValue(defaultValue) ? "true" : "false",
+      valueOn: "true",
+      valueOff: "false",
+      isRequired: required
     };
   }
 
