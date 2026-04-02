@@ -3,6 +3,8 @@ import { registerSearchCatalogItemsTool } from "./searchCatalogItems";
 import { registerGetCatalogItemFormTool } from "./getCatalogItemForm";
 import { registerPlaceOrderTool } from "./placeOrder";
 import { registerValidateServiceNowConfigurationTool } from "./validateServiceNowConfiguration";
+import { registerListUserOrdersTool } from "./listUserOrders";
+import { registerUpdateOrderTool } from "./updateOrder";
 
 export function getMinimalToolDefinitions() {
   return [
@@ -110,6 +112,45 @@ export function getMinimalToolDefinitions() {
           }
         }
       }
+    },
+    {
+      name: "list_user_orders",
+      description: "Retrieve all current (non-closed) orders for the authenticated user.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          limit: {
+            type: "integer",
+            description: "Maximum number of orders to return (default: 50)"
+          },
+          fields: {
+            type: "array",
+            items: {
+              type: "string"
+            },
+            description: "Optional list of specific fields to include in the response"
+          }
+        }
+      }
+    },
+    {
+      name: "update_order",
+      description: "Update a service catalog order from the requestor's perspective.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          orderSysId: {
+            type: "string",
+            description: "The sys_id of the order (sc_request) to update"
+          },
+          updates: {
+            type: "object",
+            description: "Key-value pairs of fields to update",
+            additionalProperties: true
+          }
+        },
+        required: ["orderSysId", "updates"]
+      }
     }
   ];
 }
@@ -119,4 +160,6 @@ export function registerTools(server: McpServer): void {
   registerGetCatalogItemFormTool(server);
   registerPlaceOrderTool(server);
   registerValidateServiceNowConfigurationTool(server);
+  registerListUserOrdersTool(server);
+  registerUpdateOrderTool(server);
 }
