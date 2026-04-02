@@ -27,7 +27,7 @@ export const config = {
     // When true, all ServiceNow API calls must use a caller-provided ServiceNow
     // bearer token (x-servicenow-access-token). This enforces ServiceNow ACLs for
     // each end user and prevents fallback to a shared integration identity.
-    requireCallerAccessToken: process.env.SERVICENOW_REQUIRE_CALLER_ACCESS_TOKEN !== "false"
+    requireCallerAccessToken: process.env.SERVICENOW_REQUIRE_CALLER_ACCESS_TOKEN === "true"
   },
 
   // Microsoft Entra ID (Azure AD) OAuth 2.0 settings.
