@@ -2,6 +2,9 @@
 
 This project hosts a stateless MCP server for ServiceNow on Azure Functions.
 
+Primary documentation has been consolidated into [MASTER_GUIDE.md](MASTER_GUIDE.md).
+Use that document as the canonical source for setup, deployment, architecture, process flow, security, and operations.
+
 ⚠️ **Security Notice**: If you're contributing to this repository, please review [SECURITY.md](SECURITY.md) to understand what credentials and files should never be committed.
 
 For reliable first-time deployments (including cross-tenant OAuth), see the deployment documentation in your local `.private-docs/` directory (internal only).

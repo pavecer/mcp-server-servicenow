@@ -4,6 +4,7 @@ dist/
 .env
 .env.*
 local.settings.json
+.azure/
 
 *.log
 coverage/

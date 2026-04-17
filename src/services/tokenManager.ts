@@ -18,6 +18,34 @@ type GrantType = "auto" | "password" | "client_credentials";
 export class TokenManager {
   private cachedToken?: CachedToken;
 
+  private formatTokenRequestError(error: unknown): string {
+    if (!axios.isAxiosError(error)) {
+      return error instanceof Error ? error.message : "unknown token request error";
+    }
+
+    const status = error.response?.status;
+    const statusText = error.response?.statusText;
+    const responseData = error.response?.data;
+    const oauthError = typeof responseData === "object" && responseData !== null
+      ? (responseData as Record<string, unknown>).error
+      : undefined;
+    const oauthDescription = typeof responseData === "object" && responseData !== null
+      ? (responseData as Record<string, unknown>).error_description
+      : undefined;
+
+    const oauthBits = [oauthError, oauthDescription]
+      .filter((v): v is string => typeof v === "string" && v.trim().length > 0)
+      .join(": ");
+
+    if (status) {
+      return oauthBits
+        ? `HTTP ${status}${statusText ? ` ${statusText}` : ""} (${oauthBits})`
+        : `HTTP ${status}${statusText ? ` ${statusText}` : ""}`;
+    }
+
+    return oauthBits || error.message || "request failed without response";
+  }
+
   async getAccessToken(): Promise<string> {
     if (this.cachedToken && Date.now() < this.cachedToken.expiresAtEpochMs) {
       return this.cachedToken.value;
@@ -49,7 +77,7 @@ export class TokenManager {
           : ["request_body", "basic"];
 
     let response: { data: OAuthTokenResponse } | undefined;
-    let lastError: unknown;
+    let lastErrorMessage = "";
 
     outer: for (const grant of grantsToTry) {
       for (const style of stylesToTry) {
@@ -57,13 +85,15 @@ export class TokenManager {
           response = await this.requestToken(tokenUrl, grant, style);
           break outer;
         } catch (error) {
-          lastError = error;
+          lastErrorMessage = `${grant}/${style}: ${this.formatTokenRequestError(error)}`;
         }
       }
     }
 
     if (!response) {
-      throw lastError;
+      throw new Error(
+        `Unable to acquire ServiceNow OAuth token after trying configured grant/auth styles. Last failure: ${lastErrorMessage || "unknown error"}`
+      );
     }
 
     const expiresInMs = Math.max(30, response.data.expires_in - 30) * 1000;
@@ -110,6 +140,9 @@ export class TokenManager {
       headers.Authorization = `Basic ${basic}`;
     }
 
-    return axios.post<OAuthTokenResponse>(tokenUrl, payload.toString(), { headers });
+    return axios.post<OAuthTokenResponse>(tokenUrl, payload.toString(), {
+      headers,
+      timeout: 10_000
+    });
   }
 }

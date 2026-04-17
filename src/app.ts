@@ -5,7 +5,6 @@ import { ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { getMinimalToolDefinitions, registerTools } from "./tools/index";
 import { runWithRequestContext } from "./requestContext";
 import { config } from "./config";
-import { validateEntraToken, buildAcceptedAudiences } from "./services/entraTokenValidator";
 import { entraAuthMiddleware } from "./utils/entraAuthMiddleware";
 
 /**
@@ -18,7 +17,14 @@ import { entraAuthMiddleware } from "./utils/entraAuthMiddleware";
  */
 export function createMcpExpressApp(): express.Express {
   const expressApp = express();
-  expressApp.use(express.json());
+  expressApp.use(express.json({ limit: "1mb", strict: true }));
+
+  expressApp.use((_req: Request, res: Response, next) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("Referrer-Policy", "no-referrer");
+    next();
+  });
 
   const setMcpHttpHeaders = (res: Response): void => {
     res.setHeader("Allow", "GET, POST, DELETE, OPTIONS");
@@ -72,7 +78,7 @@ export function createMcpExpressApp(): express.Express {
   // Validated caller identity is forwarded through RequestContext so tools can
   // log or use it.  The ServiceNow service account is still used for API calls
   // unless the caller also supplies x-servicenow-access-token.
-  expressApp.use(async (req: Request, res: Response, next) => {
+  expressApp.use((req: Request, res: Response, next) => {
     const entra = config.entraAuth;
 
     // Skip when Entra auth is disabled or not configured.
@@ -88,68 +94,7 @@ export function createMcpExpressApp(): express.Express {
       next();
       return;
     }
-
-    // RFC 6750 / MCP OAuth spec: include WWW-Authenticate with resource_metadata
-    // so MCP clients can discover the authorization server automatically.
-    const resourceMetadataUrl = `${req.protocol}://${req.get("host")}/.well-known/oauth-protected-resource`;
-    const authHeader = req.header("Authorization") || req.header("authorization") || "";
-
-    if (!authHeader.startsWith("Bearer ")) {
-      res
-        .status(401)
-        .set("WWW-Authenticate", `Bearer realm="${req.protocol}://${req.get("host")}/mcp", resource_metadata="${resourceMetadataUrl}"`)
-        .json({
-          error: "unauthorized",
-          error_description: "A valid Entra ID Bearer token is required. Configure OAuth 2.0 in Copilot Studio to obtain one automatically."
-        });
-      return;
-    }
-
-    const token = authHeader.slice(7);
-    const acceptedAudiences = buildAcceptedAudiences(entra.clientId, entra.audience ?? undefined, entra.allowedAudiences);
-
-    try {
-      const payload = await validateEntraToken(
-        token,
-        entra.tenantId,
-        acceptedAudiences,
-        entra.trustedTenantIds,
-        entra.allowAnyTenant
-      );
-      res.locals.callerEntraObjectId = payload.oid;
-      res.locals.callerUpn = payload.preferred_username || payload.upn;
-
-      next();
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : "unknown error";
-      const isExpired = errMsg.toLowerCase().includes("expired") || errMsg.toLowerCase().includes("exp");
-
-      // RFC 6750 §3.1: return WWW-Authenticate with error="invalid_token" so
-      // OAuth clients (including Power Platform connectors) know to refresh the
-      // access token automatically instead of presenting it again until it is
-      // accepted.  Without this header, Power Platform treats the 401 as a
-      // hard auth failure and never triggers a silent token refresh, causing
-      // the connector to appear broken after inactivity.
-      //
-      // error="invalid_token"  → the token is expired/revoked/wrong audience;
-      //                          the client SHOULD attempt a token refresh.
-      // resource_metadata      → lets the connector re-discover OAuth endpoints
-      //                          if its cached metadata is stale.
-      const wwwAuthenticate = [
-        `Bearer realm="${req.protocol}://${req.get("host")}/mcp"`,
-        `resource_metadata="${resourceMetadataUrl}"`,
-        `error="invalid_token"`,
-        `error_description="${isExpired ? "The access token has expired" : "The access token is invalid"}`
-      ].join(", ");
-
-      res
-        .status(401)
-        .set("WWW-Authenticate", wwwAuthenticate)
-        .json({
-          error: "unauthorized",
-          error_description: `Bearer token validation failed: ${errMsg}`
-        });
-    }
+    entraAuthMiddleware(req, res, next);
   });
 
   expressApp.use((req: Request, res: Response, next) => {
@@ -174,9 +119,19 @@ export function createMcpExpressApp(): express.Express {
     next();
   });
 
-    // Serve MCP over Streamable HTTP transport (stateless mode)
-    // Use app.use as Express 5-compatible catch-all route.
-    expressApp.use(async (req: Request, res: Response): Promise<void> => {
+  // Serve MCP over Streamable HTTP transport (stateless mode)
+  // Use app.use as Express 5-compatible route handler.
+  expressApp.use(async (req: Request, res: Response): Promise<void> => {
+    if (req.path !== "/mcp") {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+
+    if (req.method === "POST" && !req.is("application/json")) {
+      res.status(415).json({ error: "unsupported_media_type" });
+      return;
+    }
+
     const server = new McpServer({
       name: "servicenow-mcp",
       version: "1.0.0"
