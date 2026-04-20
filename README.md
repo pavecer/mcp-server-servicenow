@@ -16,6 +16,7 @@ A stateless [Model Context Protocol](https://modelcontextprotocol.io) server for
 - [Copilot Studio Setup](COPILOT_STUDIO_SETUP.md) -- add MCP tool and configure ordering topic
 - [ServiceNow Setup](docs/SERVICENOW_SETUP.md) -- OAuth app, integration user, and permissions
 - [Action Contracts](docs/MCS_ACTION_CONTRACTS.md) -- tool schemas for Copilot Studio topic authors
+- [Optional Container Deployment](docs/DEPLOY_CONTAINER_AZURE.md) -- run as one Docker container in Azure Container Apps
 - [Security Guidelines](SECURITY.md) -- what to never commit
 
 ---
@@ -129,6 +130,12 @@ Get the deployed MCP endpoint URL:
 ```bash
 azd env get-values | findstr MCP_ENDPOINT_URL
 ```
+
+### Optional: Deploy as One Container (Azure Container Apps)
+
+If you prefer a single container deployment instead of Azure Functions, use the Docker + Container Apps path documented in [docs/DEPLOY_CONTAINER_AZURE.md](docs/DEPLOY_CONTAINER_AZURE.md).
+
+This path builds this repo as a single Node.js container and exposes the same MCP endpoint shape at `/mcp`.
 
 ---
 
