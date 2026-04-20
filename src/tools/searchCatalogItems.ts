@@ -38,8 +38,8 @@ export function registerSearchCatalogItemsTool(server: McpServer): void {
         .positive()
         .max(50)
         .optional()
-        .default(10)
-        .describe("Maximum number of results to return (default: 10, max: 50)")
+        .default(25)
+        .describe("Maximum number of results to return (default: 25, max: 50)")
     },
     async ({ query, catalogSysId, categorySysId, limit }) => {
       const items = await client.searchCatalogItems(query, {

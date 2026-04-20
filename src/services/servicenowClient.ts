@@ -381,11 +381,22 @@ export class ServiceNowClient {
 
   async getCatalogItem(itemSysId: string): Promise<ServiceNowCatalogItemDetail> {
     const client = await this.getClient();
-    const response = await client.get<{ result: ServiceNowCatalogItemDetail }>(
-      `/api/sn_sc/servicecatalog/items/${itemSysId}`,
-      { params: { sysparm_expand_variables: "true" } }
-    );
-    return response.data.result;
+    try {
+      const response = await client.get<{ result: ServiceNowCatalogItemDetail }>(
+        `/api/sn_sc/servicecatalog/items/${itemSysId}`,
+        { params: { sysparm_expand_variables: "true" } }
+      );
+      return response.data.result;
+    } catch (error: unknown) {
+      // ServiceNow returns 400 when the item sys_id is not found or not accessible
+      const axiosError = error as { response?: { status?: number; data?: { error?: { message?: string } } } };
+      if (axiosError?.response?.status === 400) {
+        const snMessage = axiosError.response.data?.error?.message ?? "Catalog item not found or not accessible";
+        Logger.warn("Catalog item not found", { operation: "catalog.get_item", itemSysId, snMessage });
+        throw new Error(`Catalog item '${itemSysId}' not found: ${snMessage}. Use search_catalog_items to find available items and their correct sys_id values.`);
+      }
+      throw error;
+    }
   }
 
   async placeOrder(itemSysId: string, input: PlaceOrderInput): Promise<ServiceNowPlaceOrderResponse> {
