@@ -1,0 +1,58 @@
+{
+  "itemSysId": "962967674ff38200086eeed18110c7e7",
+  "itemName": "Desk Set Up",
+  "variableCount": 1,
+  "adaptiveCard": {
+    "type": "AdaptiveCard",
+    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+    "version": "1.5",
+    "body": [
+      {
+        "type": "TextBlock",
+        "text": "Desk Set Up",
+        "size": "Large",
+        "weight": "Bolder",
+        "wrap": true
+      },
+      {
+        "type": "TextBlock",
+        "text": "Desk Set Up for New Hires or Employee Moves\n\t\t",
+        "wrap": true,
+        "spacing": "Small"
+      },
+      {
+        "type": "TextBlock",
+        "text": "<p><font size=\"3\" face=\"arial, helvetica, sans-serif\">The facilities organization will set up your new desk with the following configuration:</font></p>\n<ul><li><font size=\"3\" face=\"arial, helvetica, sans-serif\">Docking Station</font></li><li><font size=\"3\" face=\"arial, helvetica, sans-serif\">Power Station</font></li><li><font size=\"3\" face=\"arial, helvetica, sans-serif\">Phone</font></li><li><font size=\"3\" face=\"arial, helvetica, sans-serif\">Office Chair</font></li></ul>",
+        "wrap": true,
+        "isSubtle": true,
+        "spacing": "Small"
+      },
+      {
+        "type": "TextBlock",
+        "text": "Order Details",
+        "weight": "Bolder",
+        "spacing": "Medium"
+      },
+      {
+        "type": "Input.Text",
+        "id": "ergonomic_office",
+        "label": "Please describe any ergonomic requirements",
+        "placeholder": "Enter Please describe any ergonomic requirements",
+        "value": "",
+        "isMultiline": true,
+        "isRequired": false
+      }
+    ],
+    "actions": [
+      {
+        "type": "Action.Submit",
+        "title": "Place Order",
+        "style": "positive",
+        "data": {
+          "action": "place_order",
+          "itemSysId": "962967674ff38200086eeed18110c7e7"
+        }
+      }
+    ]
+  }
+}
