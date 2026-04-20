@@ -27,6 +27,7 @@ This document outlines security best practices for this repository to protect se
 - Validation reports with configuration details
 - Internal checklists or operational procedures
 - Email addresses or team information
+- HAR files from browser sessions (contain full request/response with tokens)
 
 ## ✅ Safe to Commit
 
@@ -58,25 +59,21 @@ These files are configured to never be committed:
 |------|---------|---------------|
 | `local.settings.json` | Local development config | Contains `SERVICENOW_CLIENT_SECRET` |
 | `logs/` | Test logs and HAR archives | May contain tokens and sensitive data |
-| `local/` | Scratch scripts and temp files | Developer-specific utilities |
 | `.env`, `.env.*` | Environment variables | May contain credentials |
 | `dist/`, `node_modules/` | Build artifacts | Not needed in version control |
+| `.azure/` | Azure Developer CLI state | Contains subscription IDs and live config |
 
 ## Private Documentation Storage
 
-For internal-only documents that reveal deployment procedures, architectural decisions, or contain configuration details:
+For internal-only documents that reveal deployment procedures, architectural decisions, or contain configuration details, keep them in a private location (local only or private wiki):
 
-```
-.private-docs/
-├── AGENT_FIRST_TIME_DEPLOYMENT_RUNBOOK.md
-├── ENTRA_APP_VALIDATION_REPORT.md
-├── IMPLEMENTATION_SUMMARY.md
-├── ENTERPRISE_DEPLOYMENT_CHECKLIST.md
-├── MULTI_TENANT_IMPLEMENTATION.md
-└── REPOSITORY_REVIEW.md
-```
+- First-time deployment runbooks
+- Entra app validation reports
+- Implementation review notes
+- Enterprise deployment checklists
+- Tenant-specific configuration docs
 
-These are ignored by `.gitignore` and should be kept locally or in a private wiki, not in the public repository.
+Use placeholder values (e.g., `<your-tenant-id>`) in any documentation committed to this repo.
 
 To organize them:
 ```powershell

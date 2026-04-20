@@ -1,646 +1,273 @@
-# ServiceNow MCP Server (Azure Functions)
+﻿# ServiceNow MCP Server
 
-This project hosts a stateless MCP server for ServiceNow on Azure Functions.
+A stateless [Model Context Protocol](https://modelcontextprotocol.io) server for ServiceNow Service Catalog, hosted on Azure Functions. It connects Microsoft Copilot Studio to ServiceNow so users can search catalog items, fill order forms rendered as Adaptive Cards, and place orders from within a Copilot Studio agent.
 
-Primary documentation has been consolidated into [MASTER_GUIDE.md](MASTER_GUIDE.md).
-Use that document as the canonical source for setup, deployment, architecture, process flow, security, and operations.
+**MCP tools provided:**
 
-⚠️ **Security Notice**: If you're contributing to this repository, please review [SECURITY.md](SECURITY.md) to understand what credentials and files should never be committed.
+| Tool | Description |
+|------|-------------|
+| `search_catalog_items` | Full-text catalog search with Adaptive Card item picker |
+| `get_catalog_item_form` | Returns an Adaptive Card form for the selected item |
+| `place_order` | Submits the order and returns a confirmation Adaptive Card |
+| `validate_servicenow_configuration` | Validates OAuth and catalog API access end-to-end |
 
-For reliable first-time deployments (including cross-tenant OAuth), see the deployment documentation in your local `.private-docs/` directory (internal only).
-For Copilot Studio topic orchestration and Adaptive Card ordering flow setup, see:
-- [docs/MCS_SERVICENOW_ORDERING_RUNBOOK.md](docs/MCS_SERVICENOW_ORDERING_RUNBOOK.md)
-- [docs/MCS_ACTION_CONTRACTS.md](docs/MCS_ACTION_CONTRACTS.md)
-- [copilot-studio/topics/servicenow-ordering.topics.yaml](copilot-studio/topics/servicenow-ordering.topics.yaml)
+**Related documentation:**
 
-It provides four MCP tools:
-
-- `search_catalog_items`: Search ServiceNow catalog items by free text intent (with optional category/catalog filtering). Returns matching items with their `sys_id`, `name`, `short_description`, `category`, `categorySysId`, `catalog`, `catalogSysId`, and a ready-to-render **Adaptive Card** (`selectionAdaptiveCard`) so the user can pick the right item interactively. Use `categorySysId`/`catalogSysId` from the results to restrict a follow-up search to the same category or catalog.
-- `get_catalog_item_form`: Retrieve an item's variables and return an Adaptive Card form definition the user fills in before ordering.
-- `place_order`: Place an order and return an Adaptive Card confirmation (request number, status, link).
-- `validate_servicenow_configuration`: Validate OAuth token acquisition and effective permissions for Service Catalog APIs (`items` list, `item` detail, optional `order_now` probe).
-
-## Architecture
-
-- Runtime: Azure Functions v4 (Node.js 20, Flex Consumption FC1)
-- MCP transport: Streamable HTTP in stateless mode
-- **MCP authentication**: OAuth 2.0 via Microsoft Entra ID (primary) — each Copilot Studio user signs in individually
-- **Identity delegation**: When a user places an order, their Entra identity is automatically resolved to a ServiceNow user and assigned to the created request via post-order correction
-- ServiceNow auth: OAuth 2.0 password grant with a shared integration user
-- Secrets: client secrets stored in Azure Key Vault and referenced by Function App app settings
-- Caller access model: all Service Catalog API calls use the integration user's token. User identity is resolved for `requested_for` assignment on orders only.
-
-### How Delegated Identity Works
-
-When a user places an order through Copilot Studio:
-
-1. Copilot Studio sends the user's Entra bearer token (with `upn` / `email` claim) to the MCP server
-2. The MCP server validates the token and extracts the caller's identity
-3. The MCP server obtains a ServiceNow token for the integration user (password grant)
-4. Before placing the order, the MCP server resolves the caller's identity to a ServiceNow `sys_user` record via email/user_name lookup
-5. The MCP server calls ServiceNow's `order_now` endpoint with the resolved user sys_id
-6. Because ServiceNow's `order_now` API ignores the `sysparm_requested_for` parameter, the order is initially created under the integration user
-7. **Post-order correction**: The MCP server immediately PATCHes the created `sc_request` to set `requested_for` to the actual caller's user record
-8. The user sees the order confirmation with their identity correctly assigned
-
-This ensures that all orders placed by Copilot users are correctly attributed to their actual ServiceNow user identity, even though the integration user handles the authentication with ServiceNow.
-
-## Prerequisites
-
-- Node.js 20+
-- npm
-- Azure Functions Core Tools v4
-- Azure Developer CLI (`azd`)
-- Azure CLI (`az`)
-- A Microsoft **Entra ID** (Azure AD) app registration for MCP authentication (see Entra ID Setup below)
-- A ServiceNow OAuth application registered in the **Application Registry** (see ServiceNow Setup below)
-
-## Entra ID Setup (for Copilot Studio OAuth 2.0)
-
-This is the primary authentication mechanism for the MCP server when added to Copilot Studio.
-It enables the **OAuth 2.0 → Dynamic discovery** authentication type in the Copilot Studio MCP wizard,
-so every user in your tenant authenticates individually with their Microsoft identity.
-
-### 1. Register an Entra ID application
-
-1. In the [Azure portal](https://portal.azure.com), navigate to **Entra ID > App registrations > New registration**.
-2. Fill in:
-   - **Name**: `ServiceNow MCP Server` (or any descriptive name)
-   - **Supported account types**: `Accounts in this organizational directory only (Single tenant)`
-   - **Redirect URI**: leave blank for now
-3. Click **Register**.
-4. Note the **Application (client) ID** — this is your `ENTRA_CLIENT_ID`.
-5. Note the **Directory (tenant) ID** — this is your `ENTRA_TENANT_ID`.
-
-### 2. Create a client secret
-
-1. In the app registration, go to **Certificates & secrets > Client secrets > New client secret**.
-2. Set a description and expiry, then click **Add**.
-3. Copy the **Value** immediately — this is your `ENTRA_CLIENT_SECRET` (shown only once).
-
-### 3. Add redirect URIs for Copilot Studio / Power Platform
-
-1. In the app registration, go to **Authentication > Add a platform > Web**.
-2. Add these redirect URIs:
-   ```
-   https://oauth.botframework.com/callback
-  https://global.consent.azure-apim.net/redirect
-  https://copilotstudio.preview.microsoft.com/connection/oauth/redirect
-  https://global.consent.azure-apim.net/redirect/cr7a3-5fservicenow-20mcp-5f635855ea92fead22
-   ```
-3. Check **Access tokens** and **ID tokens** under **Implicit grant**, then **Save**.
-
-> Power Platform may use a connector-specific redirect URI under `https://global.consent.azure-apim.net/redirect/<connector-id>`. If the HAR shows a different exact `redirect_uri`, register that exact URI as well.
-
-### 4. Expose an API scope (required for OAuth 2.0 token issuance)
-
-1. In the app registration, go to **Expose an API**.
-2. Click **Set** next to **Application ID URI** and accept the default `api://<ENTRA_CLIENT_ID>`.
-3. Click **Add a scope**:
-   - **Scope name**: `access_as_user` (or any name)
-   - **Who can consent**: `Admins and users`
-   - **Admin consent display name**: `Access ServiceNow MCP as user`
-   - Click **Add scope**.
-
-> The `ENTRA_AUDIENCE` env var should be set to `api://<ENTRA_CLIENT_ID>` if you configure an Application ID URI.
-> If you leave `ENTRA_AUDIENCE` empty the server accepts both `api://<ENTRA_CLIENT_ID>` and the raw GUID as valid audiences.
-
-### 5. (Optional) Pre-consent the scope for all tenant users
-
-To avoid individual user consent prompts when the Copilot Studio agent is shared broadly:
-
-1. In the app registration, go to **API permissions > Add a permission > My APIs**.
-2. Select the `ServiceNow MCP Server` app and add the `access_as_user` permission.
-3. Click **Grant admin consent for \<your tenant\>**.
-
-This makes the agent work for all tenant users without each needing to consent individually — important for a broadly shared Copilot Studio agent.
-
-### 6. MCP OAuth discovery requirements for Copilot Studio
-
-Copilot Studio / Power Platform expects the MCP server to expose all of these OAuth-related endpoints:
-
-- `/.well-known/openid-configuration`
-- `/.well-known/oauth-authorization-server`
-- `/.well-known/oauth-protected-resource`
-- `/oauth/register` for dynamic client registration
-
-Also, unauthenticated `POST /mcp` must return HTTP 401 with a `WWW-Authenticate` header that includes `resource_metadata` pointing to `/.well-known/oauth-protected-resource`.
-
-If you deploy OAuth fixes after the connector already exists, delete and recreate the Copilot Studio connection so Power Platform refreshes the cached OAuth metadata.
+- [Copilot Studio Setup](COPILOT_STUDIO_SETUP.md) -- add MCP tool and configure ordering topic
+- [ServiceNow Setup](docs/SERVICENOW_SETUP.md) -- OAuth app, integration user, and permissions
+- [Action Contracts](docs/MCS_ACTION_CONTRACTS.md) -- tool schemas for Copilot Studio topic authors
+- [Security Guidelines](SECURITY.md) -- what to never commit
 
 ---
 
-## ServiceNow Setup
+## Prerequisites
 
-The MCP server depends on standard ServiceNow Service Catalog APIs. The Azure side only hosts the MCP endpoint; access to catalog items is ultimately determined by what the ServiceNow token is allowed to see and order.
+| Requirement | Notes |
+|-------------|-------|
+| Azure subscription | Permission to create resource groups and Entra app registrations |
+| Azure CLI (az) | [Install guide](https://learn.microsoft.com/cli/azure/install-azure-cli) |
+| Azure Developer CLI (azd) | [Install guide](https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd) |
+| Node.js 20+ | To build the project locally |
+| ServiceNow instance | Admin access to create OAuth apps and users |
+| Microsoft Entra ID | Permission to register an app |
 
-### 1. Create an OAuth application in the ServiceNow Application Registry
+---
 
-Navigate to **System OAuth > Application Registry** and create a new application:
+## Quick Start
 
-- Select **Create an OAuth API endpoint for external clients**
-- Fill in:
-  - **Name**: give the application a descriptive name (for example `MCP Server`)
-  - **Client ID**: auto-generated; copy it after saving
-  - **Client Secret**: auto-generated; copy the value while it is displayed (or click **Generate** / the lock icon to reveal/reset it)
-  - **Redirect URL**: leave blank or set to a placeholder (not used by this flow)
-  - **Default Grant Type**: select **Password Credentials**
-  - **Active**: checked
+### Step 1 -- Set up ServiceNow
 
-Save the record. Copy the **Client ID** and **Client Secret** values.
+See [docs/SERVICENOW_SETUP.md](docs/SERVICENOW_SETUP.md) for the complete guide, or run the automation script:
 
-> **Why Password Credentials?**
-> ServiceNow's standard Application Registry supports the OAuth 2.0 **Password** grant (`grant_type=password`) out of the box.
-> The **Client Credentials** grant (`grant_type=client_credentials`) requires an additional system property
-> (`glide.oauth.inbound.client.credential.grant_type.enabled = true`) that must be manually created in System Properties —
-> this is not part of the standard App Registry UI and is why client-credentials-only setups commonly fail without extra configuration.
-
-### 2. Create or identify the integration user
-
-The Password grant requires a ServiceNow user account whose credentials the server will use to obtain tokens.
-
-Create a dedicated integration user (or reuse an existing service account):
-
-1. Navigate to **User Administration > Users** and create a new user.
-2. Set a strong, stable password.
-3. On the user record, assign the roles required for Service Catalog access (at minimum `catalog` or `itil`).
-4. Ensure the user is **Active** and not locked out.
-
-Note the **username** and **password** — these go into `SERVICENOW_USERNAME` and `SERVICENOW_PASSWORD`.
-
-The server supports two operating models:
-
-1. Integration user authentication (Password grant)
-  - The MCP server uses `SERVICENOW_CLIENT_ID`, `SERVICENOW_CLIENT_SECRET`, `SERVICENOW_USERNAME`, and `SERVICENOW_PASSWORD` to obtain a ServiceNow bearer token.
-  - Catalog visibility and ordering rights are based on the integration user's permissions.
-2. Per-user token pass-through
-  - The MCP caller sends `x-servicenow-access-token` with a ServiceNow user access token.
-  - Catalog visibility and ordering rights are based on that ServiceNow user's permissions.
-
-### 2. Enable access to Service Catalog APIs
-
-This implementation calls these ServiceNow endpoints:
-
-- `GET /api/sn_sc/servicecatalog/items`
-- `GET /api/sn_sc/servicecatalog/items/{sys_id}`
-- `POST /api/sn_sc/servicecatalog/items/{sys_id}/order_now`
-
-Confirm that the OAuth application and the effective ServiceNow user behind the token are allowed to call these APIs.
-
-### 3. Grant the correct ServiceNow permissions
-
-The MCP server does not implement its own catalog authorization rules. It relies on ServiceNow to enforce them.
-
-Make sure the effective user behind the token:
-
-- can see the catalogs and categories that should be searchable
-- can read the catalog item metadata and variables
-- can submit requests for the selected catalog items
-- has access to any dependent catalog variables, reference data, and request records needed after submission
-
-If you use the integration user identity, assign these rights to that ServiceNow user account.
-
-If you use per-user token pass-through, assign these rights to the real end users or their groups/roles in ServiceNow.
-
-### 4. Validate catalog visibility in ServiceNow first
-
-Before testing the MCP server, validate directly in ServiceNow that the same token/user can:
-
-- search and view the intended catalog items
-- open the item form and read its variables
-- submit an order for the item
-
-If a catalog item is not visible in ServiceNow for that user, it will not become visible through this MCP server.
-
-### 5. Decide which identity model you want in production
-
-For production, choose one of these explicitly:
-
-1. Shared integration identity
-  - Simpler to operate
-  - All MCP calls see whatever the integration identity can access
-2. Per-user delegated identity
-  - Aligns best with your requirement that each caller only sees items they already have access to
-  - Requires the caller or integration layer to obtain a ServiceNow user token and send it as `x-servicenow-access-token`
-
-### 6. Recommended ServiceNow validation checklist
-
-- OAuth token issuance works with your chosen grant flow
-- Token can call `/api/sn_sc/servicecatalog/items`
-- Token can call `/api/sn_sc/servicecatalog/items/{sys_id}`
-- Token can call `/api/sn_sc/servicecatalog/items/{sys_id}/order_now`
-- Token returns only catalogs/items the effective user should see
-- Ordered request is visible afterward to the same effective user
-
-## Local Development
-
-1. Install dependencies:
-
-```bash
-npm install
+```powershell
+pwsh -File scripts/setup-servicenow.ps1 \
+  -InstanceUrl https://<instance>.service-now.com \
+  -AdminUser <admin-username> \
+  -AdminPassword <admin-password>
 ```
 
-2. Build:
+What you need from ServiceNow:
+- **Client ID** and **Client Secret** from the OAuth App Registry entry
+- **Integration user** username and password (with `catalog` role)
 
-```bash
-npm run build
-```
+---
 
-3. Copy the sample settings file and fill in values:
+### Step 2 -- Register an Entra ID Application
 
-```bash
-cp local.settings.sample.json local.settings.json
-```
+This enables per-user OAuth 2.0 authentication in Copilot Studio.
 
-Required settings:
+1. [Azure Portal](https://portal.azure.com) > **Entra ID > App registrations > New registration**
+   - Name: `ServiceNow MCP Server`
+   - Supported account types: `Accounts in this organizational directory only`
+   - Click **Register**
+   - Note **Application (client) ID** = `ENTRA_CLIENT_ID`
+   - Note **Directory (tenant) ID** = `ENTRA_TENANT_ID`
 
-| Variable | Purpose |
-|---|---|
-| `SERVICENOW_INSTANCE_URL` | ServiceNow instance base URL |
-| `SERVICENOW_CLIENT_ID` | ServiceNow OAuth App Registry client ID |
-| `SERVICENOW_CLIENT_SECRET` | ServiceNow OAuth App Registry client secret |
-| `SERVICENOW_USERNAME` | ServiceNow integration user login |
-| `SERVICENOW_PASSWORD` | ServiceNow integration user password |
+2. **Certificates & secrets > New client secret** -- copy the value immediately = `ENTRA_CLIENT_SECRET`
 
-Optional settings for Entra auth (production; leave blank for local testing):
+3. **Expose an API > Set** Application ID URI -- accept default `api://<ENTRA_CLIENT_ID>`
+   - **Add a scope**: name `access_as_user`, consent: Admins and users
 
-| Variable | Purpose |
-|---|---|
-| `ENTRA_TENANT_ID` | Entra tenant ID |
-| `ENTRA_CLIENT_ID` | Entra app registration client ID |
-| `ENTRA_CLIENT_SECRET` | Entra client secret (required for DCR) |
-| `ENTRA_AUDIENCE` | Expected `aud` in Entra tokens (default: `api://<ENTRA_CLIENT_ID>`) |
-| `ENTRA_OAUTH_SCOPES` | Space-delimited OAuth scopes advertised to clients. Use delegated v2 scopes and include `offline_access` (example: `openid profile offline_access User.Read`) |
-| `ENTRA_AUTH_DISABLED` | Set `true` to skip Bearer token validation locally (default in sample: `true`) |
-| `ENTRA_DCR_REGISTRATION_TOKEN` | Optional initial access token required on `POST /oauth/register` |
+4. **Authentication > Add a platform > Web** -- add redirect URIs:
+   ```
+   https://oauth.botframework.com/callback
+   https://global.consent.azure-apim.net/redirect
+   https://copilotstudio.preview.microsoft.com/connection/oauth/redirect
+   ```
+   Enable **Access tokens** and **ID tokens** > **Save**
 
-> **Local testing tip**: `ENTRA_AUTH_DISABLED=true` is pre-set in the sample so that the smoke test and direct curl/tool calls work without an Entra token. Never deploy with this flag set to `true`.
+5. *(Recommended)* **API permissions > Add > My APIs > ServiceNow MCP Server** > `access_as_user` > **Grant admin consent**
+   This lets all tenant users use the agent without individual consent prompts.
 
-4. Run locally:
+---
 
-```bash
-npm run start:dev
-```
+### Step 3 -- Deploy to Azure
 
-The MCP endpoint will be available at `http://localhost:7071/mcp`.
-The OIDC discovery endpoint will be available at `http://localhost:7071/.well-known/openid-configuration`.
-
-## Deploy to Azure
-
-### One-command deployment script (recommended)
-
-Interactive mode:
+**Interactive (recommended for first deployment):**
 
 ```powershell
 npm run deploy:azure
 ```
 
-Non-interactive mode (with Entra):
+The script prompts for all values, provisions Azure resources (Function App, Key Vault, Application Insights), deploys the function, and prints Copilot Studio setup instructions.
+
+**Non-interactive (CI/CD):**
 
 ```powershell
-pwsh -File scripts/deploy-azure.ps1 `
-  -EnvironmentName dev `
-  -Location westeurope `
-  -SubscriptionId <subscription-id> `
-  -ServiceNowInstanceUrl https://<instance>.service-now.com `
-  -ServiceNowClientId <servicenow-client-id> `
-  -ServiceNowClientSecret <servicenow-client-secret> `
-  -ServiceNowUsername <integration-user> `
-  -ServiceNowPassword <integration-user-password> `
-  -EntraTenantId <entra-tenant-id> `
-  -EntraClientId <entra-client-id> `
+pwsh -File scripts/deploy-azure.ps1 \
+  -EnvironmentName prod \
+  -Location westeurope \
+  -SubscriptionId <subscription-id> \
+  -ServiceNowInstanceUrl https://<instance>.service-now.com \
+  -ServiceNowClientId <sn-client-id> \
+  -ServiceNowClientSecret <sn-client-secret> \
+  -ServiceNowUsername <integration-user> \
+  -ServiceNowPassword <integration-user-password> \
+  -EntraTenantId <entra-tenant-id> \
+  -EntraClientId <entra-client-id> \
   -EntraClientSecret <entra-client-secret>
 ```
 
-When `EntraTenantId` is provided the script outputs **Copilot Studio OAuth 2.0 Dynamic discovery** setup instructions.
-When it is omitted the output shows the API key values instead (fallback).
-
-Optional parameters: `-SkipSmokeTest`
-
-### Manual azd deployment
-
-1. Authenticate:
+**Manual azd:**
 
 ```bash
-az login
-azd auth login
-```
-
-2. Initialize environment (first time only):
-
-```bash
-azd env new <environment-name>
-```
-
-3. Set required environment values:
-
-```bash
-azd env set SERVICENOW_INSTANCE_URL "https://<your-instance>.service-now.com"
-azd env set SERVICENOW_CLIENT_ID "<servicenow-client-id>"
-azd env set SERVICENOW_CLIENT_SECRET "<servicenow-client-secret>"
-azd env set SERVICENOW_USERNAME "<integration-user>"
-azd env set SERVICENOW_PASSWORD "<integration-user-password>"
-# Entra auth (required for Copilot Studio OAuth 2.0)
-azd env set ENTRA_TENANT_ID "<entra-tenant-id>"
-azd env set ENTRA_CLIENT_ID "<entra-client-id>"
-azd env set ENTRA_CLIENT_SECRET "<entra-client-secret>"
-```
-
-4. Provision and deploy:
-
-```bash
+az login && azd auth login
+azd env new <env-name>
+azd env set SERVICENOW_INSTANCE_URL  "https://<instance>.service-now.com"
+azd env set SERVICENOW_CLIENT_ID     "<sn-client-id>"
+azd env set SERVICENOW_CLIENT_SECRET "<sn-client-secret>"
+azd env set SERVICENOW_USERNAME      "<integration-user>"
+azd env set SERVICENOW_PASSWORD      "<integration-user-password>"
+azd env set ENTRA_TENANT_ID          "<entra-tenant-id>"
+azd env set ENTRA_CLIENT_ID          "<entra-client-id>"
+azd env set ENTRA_CLIENT_SECRET      "<entra-client-secret>"
 azd up
 ```
 
-5. Get deployed MCP endpoint URL:
+Get the deployed MCP endpoint URL:
 
 ```bash
 azd env get-values | findstr MCP_ENDPOINT_URL
 ```
 
-## Add to Microsoft Copilot Studio
+---
 
-### Primary: OAuth 2.0 — Dynamic discovery (recommended for shared tenant agents)
+### Step 4 -- Add to Microsoft Copilot Studio
 
-This option uses Entra ID for authentication. Each user in your tenant signs in individually, and the agent can be shared broadly without any per-user key management.
+See [COPILOT_STUDIO_SETUP.md](COPILOT_STUDIO_SETUP.md) for the full guide.
 
-**Requirements**: Entra ID app registration configured (see [Entra ID Setup](#entra-id-setup-for-copilot-studio-oauth-20)).
-
-1. In Copilot Studio, open your agent and go to **Tools > Add a tool > Model Context Protocol**.
-2. In the wizard, fill in:
+1. Copilot Studio > your agent > **Tools > Add a tool > Model Context Protocol**
+2. Fill in:
 
    | Field | Value |
-   |---|---|
+   |-------|-------|
    | Server name | `ServiceNow MCP` |
-   | Server description | `MCP server for ServiceNow catalog search, order form retrieval, and order placement` |
-   | Server URL | `https://<function-app-host>/mcp` |
+   | Server URL | `https://<your-function-app>.azurewebsites.net/mcp` |
    | Authentication | `OAuth 2.0` |
    | Type | `Dynamic discovery` |
 
-3. Click **Create**. Copilot Studio reads `https://<function-app-host>/.well-known/openid-configuration` automatically, finds the `registration_endpoint`, and calls it to complete OAuth client registration.
-4. When prompted to **create a connection**, sign in with any account in your Entra tenant to authorize.
-5. Verify all tools are visible:
-   - `search_catalog_items`
-   - `get_catalog_item_form`
-   - `place_order`
-   - `validate_servicenow_configuration`
-
-> **Why this works for broad sharing**: because authentication is via Entra, every user in the tenant can use the agent without individual configuration. Copilot Studio obtains an Entra access token for each user and passes it to the MCP server, which validates it before serving any requests.
+3. Click **Create** > sign in when prompted > verify all 4 tools appear.
+4. Import the ordering topic from `copilot-studio/topics/` into your agent.
 
 ---
 
-### Fallback A: OAuth 2.0 — Dynamic (no automatic DCR)
+## Architecture
 
-Use this when `ENTRA_CLIENT_SECRET` is not set (you don't want the server to expose the secret through the DCR endpoint) but you still want OAuth.
+- **Runtime**: Azure Functions v4, Node.js 20, Flex Consumption (FC1)
+- **Transport**: Streamable HTTP, stateless MCP
+- **MCP auth**: OAuth 2.0 via Microsoft Entra ID (per-user sign-in)
+- **ServiceNow auth**: OAuth 2.0 password grant with a shared integration user
+- **Secrets**: All secrets in Azure Key Vault; Function App reads via managed identity
+- **Monitoring**: Application Insights
 
-1. Use the same MCP wizard but select **OAuth 2.0 → Dynamic**.
-2. Enter the OAuth details manually:
-   - **Authorization endpoint**: `https://login.microsoftonline.com/<ENTRA_TENANT_ID>/oauth2/v2.0/authorize`
-   - **Token endpoint**: `https://login.microsoftonline.com/<ENTRA_TENANT_ID>/oauth2/v2.0/token`
-   - **Client ID**: `<ENTRA_CLIENT_ID>`
-   - **Client secret**: `<ENTRA_CLIENT_SECRET>` (entered in the wizard, not exposed by the server)
-   - **Scope**: `api://<ENTRA_CLIENT_ID>/access_as_user` (or `<ENTRA_CLIENT_ID>/.default`)
+### Delegated Identity Flow
 
----
+Each order is correctly attributed to the Copilot Studio user who placed it:
 
-### Fallback B: No Entra auth (optional Azure Function key)
+1. Copilot Studio sends the user's Entra Bearer token to the MCP server.
+2. The MCP server validates the token and extracts the caller's UPN/email.
+3. The server obtains a ServiceNow token for the integration user (password grant).
+4. The caller's email is looked up in `sys_user` to find their ServiceNow `sys_id`.
+5. The order is placed, then immediately PATCHed to set `requested_for` to the resolved user.
 
-When `ENTRA_TENANT_ID` is not set, the MCP server does not enforce Entra auth. In the default sample, the MCP HTTP trigger is configured with `authLevel: "anonymous"`, so Azure Functions keys (including `x-functions-key`) are **not** required or validated by the platform.
-
-If you want to protect the endpoint with an Azure Function key, first change the function auth configuration (for example, to `authLevel: "function"` in `src/functions/mcp.ts`) so that Azure Functions enforces keys. After you have done that, configure Copilot Studio as follows:
-
-1. Use the MCP wizard with **Authentication → API key**.
-
-   | Field | Value |
-   |---|---|
-   | Authentication | `API key` |
-   | API key type | `Header` |
-   | Header name | `x-functions-key` |
-
-2. Retrieve the function key:
-
-```bash
-az functionapp function keys list \
-  --resource-group <resource-group> \
-  --name <function-app-name> \
-  --function-name servicenow-mcp
-```
-
-3. Paste the key value when the wizard prompts for the API key.
-
-> **Note**: API key authentication is a shared secret and is not suitable for broadly shared tenant agents. Use Entra OAuth 2.0 for production deployments.
+> **Integration user permissions needed**: read on `sys_user`, read+write on `sc_request`, plus `catalog` and/or `itil` roles.
 
 ---
 
-### Caller Identity and ServiceNow Permissions
-
-With Entra OAuth, each caller's Entra identity (`oid`, `preferred_username`) is extracted from the Bearer token and logged. ServiceNow API calls still use the configured integration user (service account).
-
-## Authentication Flow with Delegated Identity
-
-The MCP server implements a delegated identity model where the authenticated Copilot Studio user's identity is resolved to a ServiceNow user and assigned to the created request. Here's the complete flow:
-
-```mermaid
-sequenceDiagram
-    actor User as Copilot Studio User<br/>(admin@tenant.onmicrosoft.com)
-    participant CS as Copilot Studio<br/>Power Virtual Agent
-    participant MCP as ServiceNow MCP<br/>Azure Functions
-    participant SN as ServiceNow<br/>Instance
-    participant ENTRA as Microsoft<br/>Entra ID
-
-    User->>CS: 1. Initiate order flow
-    CS->>ENTRA: 2. Obtain delegated Entra token<br/>(user's identity)
-    ENTRA-->>CS: 3. Entra bearer token<br/>(upn, oid)
-    CS->>MCP: 4. place_order request<br/>+ Bearer token + requestedFor
-    MCP->>MCP: 5a. Extract caller identity<br/>from Entra token
-    MCP->>SN: 5b. ServiceNow OAuth:<br/>Get integration_user token<br/>(password grant)
-    SN-->>MCP: 5c. Integration user<br/>bearer token
-    MCP->>SN: 6. Resolve requestedFor<br/>via sys_user lookup<br/>(email or user_name)
-    SN-->>MCP: 7. Return user sys_id<br/>(6816f79cc0a8...)
-    MCP->>SN: 8a. POST order_now<br/>with resolved user sys_id
-    SN-->>MCP: 8b. Order created<br/>(req_sys_id, req_number)
-    Note over MCP,SN: ⚠️ ServiceNow ignores<br/>sysparm_requested_for<br/>during order_now
-    MCP->>SN: 9. PATCH sc_request<br/>to correct requested_for<br/>to resolved user sys_id
-    SN-->>MCP: 10. Patch confirmed<br/>requested_for = david.vecer
-    MCP-->>CS: 11. Return confirmation<br/>with correct user identity
-    CS-->>User: 12. Order placed<br/>under your identity
-```
-
-**Key behavior changes with this flow:**
-
-1. **User identity resolution**: The caller's Entra identity (email/UPN from the Bearer token) is automatically resolved to a ServiceNow `sys_user` record.
-2. **Post-order correction**: Because ServiceNow's `order_now` endpoint ignores the `sysparm_requested_for` parameter, the MCP server automatically corrects the `requested_for` field via a PATCH call immediately after order creation.
-3. **Integration user isolation**: All ServiceNow API calls use the integration user's token (obtained via password grant). The integration user must have read access to `sys_user` and write access to `sc_request` to enable this flow.
-
-### Identity Resolution Configuration
-
-For order placement, `requested_for` is resolved as follows:
-
-1. If `requestedFor` is provided in the tool/API payload, the server attempts to resolve it through the configured ServiceNow `sys_user` lookup fields and uses the matching `sys_id` when found.
-2. Otherwise the server uses the authenticated caller UPN/email from the Entra token (`preferred_username`/`upn`).
-3. The server attempts to resolve that identity to a ServiceNow `sys_user.sys_id` (checking `email` then `user_name` fields), and falls back to the UPN/email string if no record is found.
-
-To make this work reliably, ensure each Copilot user has a matching ServiceNow user record where `email` (preferred) or `user_name` matches the Entra sign-in value.
-
-This behavior is configurable for different identity mappings:
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `SERVICENOW_REQUESTED_FOR_LOOKUP_FIELDS` | `email,user_name` | Comma-separated `sys_user` fields used to resolve caller identity to a ServiceNow user `sys_id`. |
-| `SERVICENOW_REQUESTED_FOR_CALLER_FIELDS` | `callerUpn` | Ordered caller identity sources to try: `callerUpn`, `callerEntraObjectId`. |
-| `SERVICENOW_REQUESTED_FOR_FALLBACK_TO_CALLER_VALUE` | `true` | When `true`, if lookup does not resolve a user record, sends the first caller identity value as `sysparm_requested_for`. |
-
-Example for custom mapping by Entra object ID stored on `sys_user.u_entra_oid`:
+## Local Development
 
 ```bash
-azd env set SERVICENOW_REQUESTED_FOR_CALLER_FIELDS "callerEntraObjectId"
-azd env set SERVICENOW_REQUESTED_FOR_LOOKUP_FIELDS "u_entra_oid"
+npm install
+cp local.settings.sample.json local.settings.json
+# Edit local.settings.json -- ENTRA_AUTH_DISABLED is true by default for local use
+npm run start:dev
 ```
 
-### Integration User Permissions
-
-For the delegated identity flow to work, the integration user requires:
-
-- **Read** on `sys_user` table (to resolve caller identity to user records)
-- **Read** on `sc_request` table (to fetch created request details)
-- **Write** on `sc_request` table (to patch the `requested_for` field after order creation)
-- All standard catalog and ordering permissions (`catalog` and/or `itil` roles)
-
-The MCP server will log a warning if a post-order correction PATCH fails, but the order itself will not be rolled back.
-
-To route ServiceNow calls under a specific user token instead of the integration user, send the ServiceNow token in the `x-servicenow-access-token` header alongside the Entra Bearer token.
-
-## Validate ServiceNow OAuth and Permissions
-
-Use `validate_servicenow_configuration` to verify that OAuth token acquisition and Service Catalog access work end-to-end.
-
-Default behavior:
-
-- Uses `x-servicenow-access-token` if present.
-- Otherwise validates configured ServiceNow integration user credentials (resource owner password credentials grant when `SERVICENOW_USERNAME`/`PASSWORD` are set; falls back to `client_credentials`).
-- Checks token/auth, catalog list access, and item detail access.
-- Skips `order_now` by default to avoid accidental request creation.
-
-The validation also confirms that the integration user has the necessary permissions for delegated identity support:
-- **Read** on `sys_user` (to resolve caller identity)
-- **Write** on `sc_request` (to patch `requested_for` after order creation)
-
-Recommended first validation call:
-
-```json
-{
-  "name": "validate_servicenow_configuration",
-  "arguments": {
-    "query": "laptop",
-    "probeOrderNow": false
-  }
-}
-```
-
-Optional explicit order permission probe:
-
-```json
-{
-  "name": "validate_servicenow_configuration",
-  "arguments": {
-    "query": "laptop",
-    "probeOrderNow": true,
-    "orderProbeItemSysId": "<test-item-sys-id>",
-    "orderProbeVariables": {}
-  }
-}
-```
-
-## Smoke Test (All 3 Tools)
-
-Run end-to-end smoke test against local or deployed MCP endpoint:
+MCP endpoint: `http://localhost:7071/mcp`
 
 ```bash
-# Local — ENTRA_AUTH_DISABLED=true must be set in local.settings.json
+# Smoke test against local
 set MCP_ENDPOINT_URL=http://localhost:7071/mcp
 npm run smoke:test
+```
 
-# Deployed with Entra auth enabled — obtain a token first and pass it
-set MCP_ENDPOINT_URL=https://<function-app-host>/mcp
-set ENTRA_BEARER_TOKEN=<entra-access-token>
-set SEARCH_QUERY=laptop
-set ORDER_VARIABLES_JSON={}
+---
+
+## Environment Variables Reference
+
+### Required
+
+| Variable | Description |
+|----------|-------------|
+| `SERVICENOW_INSTANCE_URL` | ServiceNow base URL (`https://instance.service-now.com`) |
+| `SERVICENOW_CLIENT_ID` | OAuth App Registry client ID |
+| `SERVICENOW_CLIENT_SECRET` | OAuth App Registry client secret |
+| `SERVICENOW_USERNAME` | Integration user login |
+| `SERVICENOW_PASSWORD` | Integration user password |
+
+### Entra ID (required for Copilot Studio OAuth)
+
+| Variable | Description |
+|----------|-------------|
+| `ENTRA_TENANT_ID` | Entra directory (tenant) ID |
+| `ENTRA_CLIENT_ID` | App registration client ID |
+| `ENTRA_CLIENT_SECRET` | App registration client secret (for Dynamic Client Registration) |
+| `ENTRA_AUDIENCE` | Expected `aud` in tokens; defaults to `api://<ENTRA_CLIENT_ID>` |
+
+### Optional
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ENTRA_AUTH_DISABLED` | `false` | Skip Bearer validation -- local dev only, never in production |
+| `ENTRA_OAUTH_SCOPES` | `openid profile offline_access User.Read` | Scopes advertised in OIDC discovery |
+| `ENTRA_TRUSTED_TENANT_IDS` | _(empty)_ | Accepted remote tenant IDs (multi-tenant scenarios) |
+| `ENTRA_ALLOW_ANY_TENANT` | `false` | Accept any Microsoft tenant token |
+| `ENTRA_DCR_REGISTRATION_TOKEN` | _(unset)_ | Require this Bearer on `POST /oauth/register` |
+| `SERVICENOW_OAUTH_TOKEN_PATH` | `/oauth_token.do` | ServiceNow token endpoint path |
+| `SERVICENOW_OAUTH_GRANT_TYPE` | `auto` | Override grant type: `password` or `client_credentials` |
+| `SERVICENOW_REQUESTED_FOR_LOOKUP_FIELDS` | `email,user_name` | `sys_user` fields for identity resolution |
+| `SERVICENOW_REQUESTED_FOR_CALLER_FIELDS` | `callerUpn` | Entra token claims to use as identity source |
+| `SERVICENOW_REQUESTED_FOR_FALLBACK_TO_CALLER_VALUE` | `true` | Fall back to UPN if no `sys_user` match |
+
+---
+
+## Smoke Testing Deployed Endpoint
+
+```bash
+set MCP_ENDPOINT_URL=https://<function-app>.azurewebsites.net/mcp
+set ENTRA_BEARER_TOKEN=<access-token>
 npm run smoke:test
 ```
 
-To obtain `ENTRA_BEARER_TOKEN` for a deployed smoke test, use the Azure CLI:
+Get a token:
 
 ```bash
 az account get-access-token --resource api://<ENTRA_CLIENT_ID> --query accessToken -o tsv
 ```
 
-Optional variables: `ITEM_SYS_ID`, `REQUESTED_FOR`, `FUNCTION_KEY`
-
-> `place_order` may fail if required item variables are missing; set `ORDER_VARIABLES_JSON` to valid form values.
-
-## Security and Operations Notes
-
-- `ENTRA_CLIENT_SECRET` is stored in Key Vault (`entra-client-secret`) and referenced by app setting.
-- ServiceNow credentials (`SERVICENOW_CLIENT_SECRET`, `SERVICENOW_PASSWORD`) are stored in Key Vault.
-- Function App managed identity is granted `Key Vault Secrets User` role.
-- Application Insights is enabled for monitoring.
-- Use separate `azd` environments for dev/test/prod.
-- Never set `ENTRA_AUTH_DISABLED=true` in a deployed environment.
-
-### DCR endpoint (`/oauth/register`) security
-
-`POST /oauth/register` returns the `ENTRA_CLIENT_SECRET` to callers and is `authLevel: anonymous` by design — RFC 7591 DCR expects clients to register without prior credentials. Two options to harden this endpoint:
-
-| Option | How |
-|---|---|
-| **Initial access token** | Set `ENTRA_DCR_REGISTRATION_TOKEN` to a strong random value. The endpoint will require `Authorization: Bearer <token>` before returning credentials. Configure the same token in any client or Copilot Studio custom header. |
-| **Disable DCR** | Clear (unset) `ENTRA_CLIENT_SECRET`. The registration endpoint returns 404 and the discovery document omits `registration_endpoint`. Use the "Dynamic" or "Manual" Copilot Studio auth option instead. |
-
-Network-level protection (VNet integration / Private Endpoints) is also recommended for production deployments.
+---
 
 ## Troubleshooting
 
-### MCP endpoint returns 401
+**401 on MCP endpoint** -- Entra auth is active and no valid Bearer token was sent. Check the Copilot Studio connection (user must have signed in). For local testing, set `ENTRA_AUTH_DISABLED=true`.
 
-- Entra auth is active but no Bearer token was sent. Ensure Copilot Studio is configured with OAuth 2.0 and the connection has been created.
-- If testing locally, set `ENTRA_AUTH_DISABLED=true` in `local.settings.json`.
+**Orders created but `requested_for` is wrong** -- The post-order PATCH failed. Verify:
+- Integration user has **write** on `sc_request` in ServiceNow.
+- Caller's Entra email matches `sys_user.email` or `sys_user.user_name`.
+- Application Insights traces for `[ServiceNowClient.placeOrder.requestedForPatchFailed]`.
 
-### Orders are created but `requested_for` is not corrected
+**Dynamic discovery fails in Copilot Studio** -- Verify `ENTRA_TENANT_ID` and `ENTRA_CLIENT_ID` are set. Confirm the OIDC endpoint returns 200. If you changed OAuth settings after the MCP tool was added, **delete and re-add the connection** -- Power Platform caches OIDC metadata on first connect.
 
-This indicates the post-order PATCH is failing. Common causes:
+**validate_servicenow_configuration errors** -- Run with `probeOrderNow: false` first to isolate auth vs. catalog access issues.
 
-- **Integration user lacks `write` on `sc_request`**: Add write permission on the `sc_request` table for the ServiceNow integration user.
-- **User lookup is failing**: Verify that the caller's Entra email matches a ServiceNow `sys_user.email` or `sys_user.user_name` field. View Application Insights traces for `[ServiceNowClient.placeOrder]` to see the resolved user sys_id.
-- **ServiceNow instance restrictions**: Some ServiceNow instances may have field-level security or business rules preventing `requested_for` updates after order creation. Check ServiceNow audit logs for PATCH failures.
+---
 
-Check Application Insights for the telemetry key `[ServiceNowClient.placeOrder.requestedForPatchFailed]` to see detailed error messages.
+## Security
 
-### Dynamic discovery fails in Copilot Studio
+All secrets are stored in Azure Key Vault. The Function App reads them via managed identity. No credentials appear in app settings in plaintext.
 
-- Verify `ENTRA_TENANT_ID` and `ENTRA_CLIENT_ID` are set in Function App settings.
-- Visit `https://<function-app-host>/.well-known/openid-configuration` in a browser to confirm the endpoint responds.
-- Verify `ENTRA_CLIENT_SECRET` is set; the `registration_endpoint` is only included in the discovery document when a secret is configured.
+- `local.settings.json` is excluded by `.gitignore` -- never commit it.
+- Never deploy with `ENTRA_AUTH_DISABLED=true`.
+- Protect `/oauth/register` with `ENTRA_DCR_REGISTRATION_TOKEN` or leave `ENTRA_CLIENT_SECRET` unset to disable DCR.
 
-### 401 from ServiceNow token endpoint
-
-- Verify `SERVICENOW_CLIENT_ID`, `SERVICENOW_CLIENT_SECRET`, `SERVICENOW_USERNAME`, and `SERVICENOW_PASSWORD`.
-- Confirm token path (`SERVICENOW_OAUTH_TOKEN_PATH`), usually `/oauth_token.do`.
-- Ensure the integration user account is **active** and not locked in ServiceNow.
-
-### Empty catalog search results
-
-- Adjust the query text.
-- Ensure the ServiceNow integration user has catalog visibility (role `catalog` or `itil`).
-
-### User lookup is not resolving the caller's identity
-
-- Verify that the caller's Entra `upn` / `email` matches a ServiceNow `sys_user.email` or `sys_user.user_name` field (case-insensitive).
-- Check `SERVICENOW_REQUESTED_FOR_LOOKUP_FIELDS` configuration — by default it searches `email,user_name`.
-- Enable diagnostic logging in Application Insights and filter traces for `[ServiceNowClient.lookupServiceNowUser]` to see which fields were checked and what values matched.
-
-### Grant type reference
-
-| Grant type | When to use | Extra ServiceNow setup required |
-|---|---|---|
-| `password` (default when username/password are set) | Standard App Registry, works out of the box | None — just the App Registry record and an active integration user |
-| `client_credentials` | Machine-to-machine without a user account | Must manually create system property `glide.oauth.inbound.client.credential.grant_type.enabled = true` in **System Properties** |
+See [SECURITY.md](SECURITY.md) for full guidelines.
