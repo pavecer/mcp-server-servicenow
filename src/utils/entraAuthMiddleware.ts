@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from "express";
 import { config } from "../config";
 import { validateEntraToken, buildAcceptedAudiences } from "../services/entraTokenValidator";
+import Logger from "./logger";
 
 /**
  * Shared Entra ID Bearer token validation middleware.
@@ -26,6 +27,10 @@ export function entraAuthMiddleware(req: Request, res: Response, next: NextFunct
   const authHeader = req.header("Authorization") || req.header("authorization") || "";
 
   if (!authHeader.startsWith("Bearer ")) {
+    Logger.warn("Entra auth: missing or invalid Bearer token", {
+      operation: "entra_auth_missing",
+      hasAuthHeader: !!authHeader
+    });
     res
       .status(401)
       .set("WWW-Authenticate", `Bearer realm="${req.protocol}://${req.get("host")}", resource_metadata="${resourceMetadataUrl}"`)
@@ -45,6 +50,11 @@ export function entraAuthMiddleware(req: Request, res: Response, next: NextFunct
 
   validateEntraToken(token, entra.tenantId, acceptedAudiences, entra.trustedTenantIds, entra.allowAnyTenant)
     .then(payload => {
+      Logger.debug("Entra auth: token validated", {
+        operation: "entra_auth_success",
+        oid: payload.oid,
+        upn: payload.preferred_username || payload.upn
+      });
       res.locals.callerEntraObjectId = payload.oid;
       res.locals.callerUpn = payload.preferred_username || payload.upn;
       next();
@@ -52,6 +62,10 @@ export function entraAuthMiddleware(req: Request, res: Response, next: NextFunct
     .catch(err => {
       const errMsg = err instanceof Error ? err.message : "unknown error";
       const isExpired = errMsg.toLowerCase().includes("expired") || errMsg.toLowerCase().includes("exp");
+      Logger.warn("Entra auth: token validation failed", {
+        operation: "entra_auth_failed",
+        reason: isExpired ? "token_expired" : "invalid_token"
+      }, err);
       const wwwAuthenticate = [
         `Bearer realm="${req.protocol}://${req.get("host")}"`,
         `resource_metadata="${resourceMetadataUrl}"`,

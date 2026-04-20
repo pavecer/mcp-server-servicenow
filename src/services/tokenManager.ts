@@ -1,5 +1,6 @@
 import axios from "axios";
 import { config } from "../config";
+import Logger from "../utils/logger";
 
 interface OAuthTokenResponse {
   access_token: string;
@@ -48,6 +49,10 @@ export class TokenManager {
 
   async getAccessToken(): Promise<string> {
     if (this.cachedToken && Date.now() < this.cachedToken.expiresAtEpochMs) {
+      Logger.debug("Using cached ServiceNow access token", {
+        operation: "token.get_cached",
+        expiresInMs: this.cachedToken.expiresAtEpochMs - Date.now()
+      });
       return this.cachedToken.value;
     }
 
@@ -76,24 +81,54 @@ export class TokenManager {
           ? ["basic"]
           : ["request_body", "basic"];
 
+    Logger.debug("Acquiring ServiceNow access token", {
+      operation: "token.acquire",
+      grantsToTry: grantsToTry.join(","),
+      stylesToTry: stylesToTry.join(",")
+    });
+
     let response: { data: OAuthTokenResponse } | undefined;
+    let lastError: Error | undefined;
     let lastErrorMessage = "";
 
     outer: for (const grant of grantsToTry) {
       for (const style of stylesToTry) {
         try {
+          Logger.debug("Attempting token request", {
+            operation: "token.request_attempt",
+            grant,
+            style
+          });
           response = await this.requestToken(tokenUrl, grant, style);
+          Logger.info("ServiceNow token acquired successfully", {
+            operation: "token.acquired",
+            grant,
+            style,
+            expiresIn: response.data.expires_in
+          });
           break outer;
         } catch (error) {
-          lastErrorMessage = `${grant}/${style}: ${this.formatTokenRequestError(error)}`;
+          const errorMsg = this.formatTokenRequestError(error);
+          lastErrorMessage = `${grant}/${style}: ${errorMsg}`;
+          lastError = error instanceof Error ? error : new Error(errorMsg);
+          Logger.warn("Token request failed", {
+            operation: "token.request_failed",
+            grant,
+            style,
+            error: errorMsg
+          });
         }
       }
     }
 
     if (!response) {
-      throw new Error(
-        `Unable to acquire ServiceNow OAuth token after trying configured grant/auth styles. Last failure: ${lastErrorMessage || "unknown error"}`
-      );
+      const message = `Unable to acquire ServiceNow OAuth token after trying configured grant/auth styles. Last failure: ${lastErrorMessage || "unknown error"}`;
+      Logger.error("ServiceNow token acquisition failed", {
+        operation: "token.acquisition_failed",
+        grantsAttempted: grantsToTry.join(","),
+        stylesAttempted: stylesToTry.join(",")
+      }, lastError);
+      throw new Error(message);
     }
 
     const expiresInMs = Math.max(30, response.data.expires_in - 30) * 1000;

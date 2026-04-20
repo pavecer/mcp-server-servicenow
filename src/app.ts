@@ -6,6 +6,7 @@ import { getMinimalToolDefinitions, registerTools } from "./tools/index";
 import { runWithRequestContext } from "./requestContext";
 import { config } from "./config";
 import { entraAuthMiddleware } from "./utils/entraAuthMiddleware";
+import Logger from "./utils/logger";
 
 /**
  * Creates and returns the Express application that hosts the MCP server.
@@ -65,6 +66,65 @@ export function createMcpExpressApp(): express.Express {
   // Health / readiness probe used by Azure to verify the function is up
   expressApp.get("/health", (_req: Request, res: Response) => {
     res.json({ status: "ok", server: "servicenow-mcp" });
+  });
+
+  // Request/response logging middleware: captures timing and errors, suppresses noisy internals
+  expressApp.use((req: Request, res: Response, next) => {
+    const startTime = Date.now();
+    const method = req.method;
+    const path = req.path;
+
+    // Suppress the noisy ServerResponse object logging from serverless-http internals
+    // by overriding console methods briefly during next()
+    const originalLog = console.log;
+    const originalWarn = console.warn;
+    let suppressLogging = false;
+
+    const captureOriginal = () => {
+      console.log = (msg: unknown, ...args: unknown[]) => {
+        // Only suppress ServerResponse object dumps; allow other console.logs
+        if (typeof msg === "string" && msg.includes("ServerResponse")) {
+          return;
+        }
+        originalLog.call(console, msg, ...args);
+      };
+      console.warn = (msg: unknown, ...args: unknown[]) => {
+        if (typeof msg === "string" && msg.includes("ServerResponse")) {
+          return;
+        }
+        originalWarn.call(console, msg, ...args);
+      };
+    };
+
+    const restoreOriginal = () => {
+      console.log = originalLog;
+      console.warn = originalWarn;
+    };
+
+    // Hook response finish to log after response is sent
+    const originalEnd = res.end;
+    res.end = function (...args: unknown[]) {
+      restoreOriginal();
+      const durationMs = Date.now() - startTime;
+      const statusCode = res.statusCode;
+
+      if (method === "GET" && path === "/health") {
+        Logger.debug("Health check", { operation: "health_check", statusCode, durationMs });
+      } else if (method === "GET") {
+        Logger.debug("SSE stream opened", { operation: "sse_open", statusCode, durationMs });
+      } else if (method === "OPTIONS") {
+        Logger.debug("CORS preflight", { operation: "cors_preflight", statusCode, durationMs });
+      } else if (method === "DELETE") {
+        Logger.debug("Session cleanup", { operation: "session_cleanup", statusCode, durationMs });
+      } else if (method === "POST") {
+        Logger.info("MCP tool call completed", { operation: "tool_call", statusCode, durationMs });
+      }
+
+      return originalEnd.apply(this, args as Parameters<typeof originalEnd>);
+    };
+
+    captureOriginal();
+    next();
   });
 
   // ---------------------------------------------------------------------------

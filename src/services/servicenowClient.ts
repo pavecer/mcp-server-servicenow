@@ -9,6 +9,7 @@ import {
 } from "../types/servicenow";
 import { TokenManager } from "./tokenManager";
 import { getRequestContext } from "../requestContext";
+import Logger from "../utils/logger";
 
 interface SearchOptions {
   catalogSysId?: string;
@@ -333,26 +334,49 @@ export class ServiceNowClient {
   }
 
   async searchCatalogItems(text: string, options?: SearchOptions): Promise<ServiceNowCatalogItem[]> {
-    const client = await this.getClient();
+    try {
+      Logger.debug("Searching ServiceNow catalog", {
+        operation: "catalog.search",
+        query: text,
+        limit: options?.limit ?? 20,
+        catalogSysId: options?.catalogSysId,
+        categorySysId: options?.categorySysId
+      });
 
-    const params: Record<string, string | number> = {
-      sysparm_text: text,
-      sysparm_limit: options?.limit ?? 20
-    };
+      const client = await this.getClient();
 
-    if (options?.catalogSysId) {
-      params.sysparm_catalog = options.catalogSysId;
+      const params: Record<string, string | number> = {
+        sysparm_text: text,
+        sysparm_limit: options?.limit ?? 20
+      };
+
+      if (options?.catalogSysId) {
+        params.sysparm_catalog = options.catalogSysId;
+      }
+
+      if (options?.categorySysId) {
+        params.sysparm_category = options.categorySysId;
+      }
+
+      const response = await client.get<{ result: ServiceNowCatalogItem[] }>("/api/sn_sc/servicecatalog/items", {
+        params
+      });
+
+      const items = response.data.result || [];
+      Logger.debug("Catalog search completed", {
+        operation: "catalog.search_completed",
+        foundCount: items.length,
+        query: text
+      });
+
+      return items;
+    } catch (error) {
+      Logger.error("Catalog search failed", {
+        operation: "catalog.search_failed",
+        query: text
+      }, error);
+      throw error;
     }
-
-    if (options?.categorySysId) {
-      params.sysparm_category = options.categorySysId;
-    }
-
-    const response = await client.get<{ result: ServiceNowCatalogItem[] }>("/api/sn_sc/servicecatalog/items", {
-      params
-    });
-
-    return response.data.result || [];
   }
 
   async getCatalogItem(itemSysId: string): Promise<ServiceNowCatalogItemDetail> {
@@ -365,69 +389,79 @@ export class ServiceNowClient {
   }
 
   async placeOrder(itemSysId: string, input: PlaceOrderInput): Promise<ServiceNowPlaceOrderResponse> {
-    const client = await this.getClient();
-    const requestedForResolution = await this.resolveRequestedFor(client, input.requestedFor);
-    const resolvedRequestedFor = requestedForResolution.value;
+    try {
+      const client = await this.getClient();
+      const requestedForResolution = await this.resolveRequestedFor(client, input.requestedFor);
+      const resolvedRequestedFor = requestedForResolution.value;
 
-    const payload: Record<string, unknown> = {
-      sysparm_quantity: input.quantity ?? 1,
-      variables: input.variables
-    };
+      const payload: Record<string, unknown> = {
+        sysparm_quantity: input.quantity ?? 1,
+        variables: input.variables
+      };
 
-    if (resolvedRequestedFor) {
-      payload.sysparm_requested_for = resolvedRequestedFor;
-    }
+      if (resolvedRequestedFor) {
+        payload.sysparm_requested_for = resolvedRequestedFor;
+      }
 
-    console.info("[ServiceNowClient.placeOrder.requestedFor]", JSON.stringify({
-      itemSysId,
-      source: requestedForResolution.diagnostics.source,
-      explicitRequestedForProvided: requestedForResolution.diagnostics.explicitRequestedForProvided,
-      resolvedRequestedFor: requestedForResolution.diagnostics.resolvedRequestedFor,
-      callerUpn: requestedForResolution.diagnostics.callerUpn,
-      callerEntraObjectId: requestedForResolution.diagnostics.callerEntraObjectId,
-      callerValues: requestedForResolution.diagnostics.callerValues,
-      lookupFields: requestedForResolution.diagnostics.lookupFields,
-      matchedLookupField: requestedForResolution.diagnostics.matchedLookupField,
-      matchedLookupValue: requestedForResolution.diagnostics.matchedLookupValue,
-      usedCallerServiceNowToken: Boolean(getRequestContext()?.serviceNowAccessToken)
-    }));
+      Logger.info("Placing ServiceNow order", {
+        operation: "order.place",
+        itemSysId,
+        quantity: input.quantity ?? 1,
+        requestedForSource: requestedForResolution.diagnostics.source,
+        resolvedRequestedFor: requestedForResolution.diagnostics.resolvedRequestedFor,
+        usedCallerServiceNowToken: Boolean(getRequestContext()?.serviceNowAccessToken)
+      });
 
-    const response = await client.post<{ result: ServiceNowOrderResult }>(
-      `/api/sn_sc/servicecatalog/items/${itemSysId}/order_now`,
-      payload
-    );
+      const response = await client.post<{ result: ServiceNowOrderResult }>(
+        `/api/sn_sc/servicecatalog/items/${itemSysId}/order_now`,
+        payload
+      );
 
-    // Always use sys_id for the request identifier - it's the reliable primary key
-    const requestSysId = response.data.result.sys_id;
-    if (
-      typeof requestSysId === "string" &&
-      typeof resolvedRequestedFor === "string" &&
-      this.isLikelyServiceNowSysId(requestSysId) &&
-      this.isLikelyServiceNowSysId(resolvedRequestedFor)
-    ) {
-      try {
-        await this.updateRequestRequestedFor(client, requestSysId, resolvedRequestedFor);
+      // Always use sys_id for the request identifier - it's the reliable primary key
+      const requestSysId = response.data.result.sys_id;
+      if (
+        typeof requestSysId === "string" &&
+        typeof resolvedRequestedFor === "string" &&
+        this.isLikelyServiceNowSysId(requestSysId) &&
+        this.isLikelyServiceNowSysId(resolvedRequestedFor)
+      ) {
+        try {
+          await this.updateRequestRequestedFor(client, requestSysId, resolvedRequestedFor);
         await this.updateRequestItemsRequestedFor(client, requestSysId, resolvedRequestedFor);
-        console.info("[ServiceNowClient.placeOrder.requestedForPatched]", JSON.stringify({
+        Logger.debug("Order requestedFor field patched", {
+          operation: "order.requestedFor_patched",
           itemSysId,
           requestSysId,
           requestedForSysId: resolvedRequestedFor
-        }));
+        });
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        console.warn("[ServiceNowClient.placeOrder.requestedForPatchFailed]", JSON.stringify({
+        Logger.warn("Failed to patch order requestedFor field", {
+          operation: "order.requestedFor_patch_failed",
           itemSysId,
           requestSysId,
-          requestedForSysId: resolvedRequestedFor,
-          error: errorMessage
-        }));
+          requestedForSysId: resolvedRequestedFor
+        }, error);
       }
     }
+
+    Logger.info("Order placed successfully", {
+      operation: "order.placed",
+      itemSysId,
+      requestSysId: response.data.result.sys_id
+    });
 
     return {
       result: response.data.result,
       requestedForDiagnostics: requestedForResolution.diagnostics
     };
+    } catch (error) {
+      Logger.error("Order placement failed", {
+        operation: "order.place_failed",
+        itemSysId
+      }, error);
+      throw error;
+    }
   }
 
   async listUserOrders(
