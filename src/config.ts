@@ -24,6 +24,9 @@ export const config = {
       : ["callerUpn"],
     requestedForFallbackToCallerValue: process.env.SERVICENOW_REQUESTED_FOR_FALLBACK_TO_CALLER_VALUE !== "false",
     requestedForDiagnosticsEnabled: process.env.SERVICENOW_REQUESTED_FOR_DIAGNOSTICS === "true",
+    // When false (default), requested_for diagnostics never include caller PII.
+    // Set true only for short-lived troubleshooting in a controlled environment.
+    requestedForDiagnosticsIncludePii: process.env.SERVICENOW_REQUESTED_FOR_DIAGNOSTICS_INCLUDE_PII === "true",
     // When true, all ServiceNow API calls must use a caller-provided ServiceNow
     // bearer token (x-servicenow-access-token). This enforces ServiceNow ACLs for
     // each end user and prevents fallback to a shared integration identity.
@@ -49,6 +52,10 @@ export const config = {
     // "Authorization: Bearer <token>" when calling POST /oauth/register.
     // When unset the endpoint is open (required for automated Copilot Studio DCR).
     dcrRegistrationToken: process.env.ENTRA_DCR_REGISTRATION_TOKEN,
+    // Keep DCR closed by default when no registration token is configured.
+    // Set ENTRA_DCR_ALLOW_UNAUTHENTICATED=true only if you explicitly require
+    // unauthenticated dynamic client registration for your client onboarding flow.
+    dcrAllowUnauthenticated: process.env.ENTRA_DCR_ALLOW_UNAUTHENTICATED === "true",
     // Expected audience in the Bearer token. Defaults to the Entra client ID.
     // Override to "api://<clientId>" when the app exposes a custom App ID URI.
     audience: process.env.ENTRA_AUDIENCE,
@@ -72,6 +79,14 @@ export const config = {
     // Comma-separated list. Use when your app has a custom App ID URI or non-standard audience.
     allowedAudiences: process.env.ENTRA_ALLOWED_AUDIENCES
       ? process.env.ENTRA_ALLOWED_AUDIENCES.split(",").map(a => a.trim()).filter(Boolean)
+      : []
+  },
+
+  http: {
+    // Comma-separated CORS allowlist for API/browser endpoints.
+    // Empty means no explicit browser origins are allowed.
+    corsAllowedOrigins: process.env.CORS_ALLOWED_ORIGINS
+      ? process.env.CORS_ALLOWED_ORIGINS.split(",").map(v => v.trim()).filter(Boolean)
       : []
   }
 };

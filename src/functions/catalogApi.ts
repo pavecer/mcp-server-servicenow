@@ -34,11 +34,26 @@ import { config } from "../config";
 
 const catalogClient = new ServiceNowClient();
 
-const CORS_HEADERS: Record<string, string> = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization, x-functions-key"
-};
+function buildCorsHeaders(origin?: string | null): Record<string, string> {
+  const base: Record<string, string> = {
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, x-functions-key, x-servicenow-access-token",
+    Vary: "Origin"
+  };
+
+  if (!origin) {
+    return base;
+  }
+
+  if (config.http.corsAllowedOrigins.includes(origin)) {
+    return {
+      ...base,
+      "Access-Control-Allow-Origin": origin
+    };
+  }
+
+  return base;
+}
 
 // ---------------------------------------------------------------------------
 // Express app hosting the catalog REST routes
@@ -245,9 +260,12 @@ async function catalogFunctionHandler(
   request: HttpRequest,
   context: InvocationContext
 ): Promise<HttpResponseInit> {
+  const origin = request.headers.get("origin");
+  const corsHeaders = buildCorsHeaders(origin);
+
   const mutableReq = await toAzureRequest(request);
   const result = await catalogHandler(context, mutableReq) as HttpResponseInit;
-  return { ...result, headers: { ...CORS_HEADERS, ...(result.headers ?? {}) } };
+  return { ...result, headers: { ...corsHeaders, ...(result.headers ?? {}) } };
 }
 
 // POST /api/catalog/search
@@ -279,5 +297,8 @@ app.http("catalog-options", {
   methods: ["OPTIONS"],
   authLevel: "anonymous",
   route: "api/catalog/{*rest}",
-  handler: async (): Promise<HttpResponseInit> => ({ status: 204, headers: CORS_HEADERS })
+  handler: async (request): Promise<HttpResponseInit> => {
+    const origin = request.headers.get("origin");
+    return { status: 204, headers: buildCorsHeaders(origin) };
+  }
 });

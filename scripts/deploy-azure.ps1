@@ -78,6 +78,20 @@ function Read-SecretValue {
   }
 }
 
+function Mask-SecretForDisplay {
+  param([string]$Value)
+
+  if ([string]::IsNullOrWhiteSpace($Value)) {
+    return "(empty)"
+  }
+
+  if ($Value.Length -le 8) {
+    return "********"
+  }
+
+  return $Value.Substring(0, 4) + "..." + $Value.Substring($Value.Length - 4)
+}
+
 Require-Command -Name "az"
 Require-Command -Name "azd"
 Require-Command -Name "node"
@@ -188,7 +202,7 @@ try {
   Write-Host ""
   Write-Host "Deployment complete."
   Write-Host "MCP Endpoint URL : $endpointUrl"
-  Write-Host "Function Key     : $defaultFunctionKey"
+  Write-Host "Function Key     : $(Mask-SecretForDisplay -Value $defaultFunctionKey)"
   Write-Host ""
 
   if (-not [string]::IsNullOrWhiteSpace($EntraTenantId)) {
@@ -204,7 +218,8 @@ try {
     Write-Host "- MCP URL         = $endpointUrl"
     Write-Host "- Authentication  = API key"
     Write-Host "- Header name     = x-functions-key"
-    Write-Host "- Header value    = $defaultFunctionKey"
+    Write-Host "- Header value    = $(Mask-SecretForDisplay -Value $defaultFunctionKey)"
+    Write-Host "  (Use the full key from Azure Function App -> Function keys; do not share it in logs.)"
   }
 
   if (-not $SkipSmokeTest.IsPresent) {

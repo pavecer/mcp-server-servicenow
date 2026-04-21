@@ -226,15 +226,19 @@ npm run smoke:test
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ENTRA_AUTH_DISABLED` | `false` | Skip Bearer validation -- local dev only, never in production |
-| `ENTRA_OAUTH_SCOPES` | `openid profile offline_access User.Read` | Scopes advertised in OIDC discovery |
+| `ENTRA_OAUTH_SCOPES` | `api://<ENTRA_CLIENT_ID>/access_as_user openid profile offline_access` | Scopes advertised in OIDC discovery |
 | `ENTRA_TRUSTED_TENANT_IDS` | _(empty)_ | Accepted remote tenant IDs (multi-tenant scenarios) |
 | `ENTRA_ALLOW_ANY_TENANT` | `false` | Accept any Microsoft tenant token |
-| `ENTRA_DCR_REGISTRATION_TOKEN` | _(unset)_ | Require this Bearer on `POST /oauth/register` |
+| `ENTRA_DCR_REGISTRATION_TOKEN` | _(unset)_ | Bearer token required on `POST /oauth/register` |
+| `ENTRA_DCR_ALLOW_UNAUTHENTICATED` | `false` | Allow open Dynamic Client Registration when no token is configured |
+| `CORS_ALLOWED_ORIGINS` | _(empty)_ | Comma-separated browser origins for CORS-enabled endpoints |
 | `SERVICENOW_OAUTH_TOKEN_PATH` | `/oauth_token.do` | ServiceNow token endpoint path |
 | `SERVICENOW_OAUTH_GRANT_TYPE` | `auto` | Override grant type: `password` or `client_credentials` |
 | `SERVICENOW_REQUESTED_FOR_LOOKUP_FIELDS` | `email,user_name` | `sys_user` fields for identity resolution |
 | `SERVICENOW_REQUESTED_FOR_CALLER_FIELDS` | `callerUpn` | Entra token claims to use as identity source |
 | `SERVICENOW_REQUESTED_FOR_FALLBACK_TO_CALLER_VALUE` | `true` | Fall back to UPN if no `sys_user` match |
+| `SERVICENOW_REQUESTED_FOR_DIAGNOSTICS` | `false` | Include requested_for diagnostics in tool/API responses |
+| `SERVICENOW_REQUESTED_FOR_DIAGNOSTICS_INCLUDE_PII` | `false` | Include raw caller identifiers in diagnostics (for short-lived troubleshooting only) |
 
 ---
 
@@ -275,6 +279,56 @@ All secrets are stored in Azure Key Vault. The Function App reads them via manag
 
 - `local.settings.json` is excluded by `.gitignore` -- never commit it.
 - Never deploy with `ENTRA_AUTH_DISABLED=true`.
-- Protect `/oauth/register` with `ENTRA_DCR_REGISTRATION_TOKEN` or leave `ENTRA_CLIENT_SECRET` unset to disable DCR.
+- Keep `/oauth/register` protected with `ENTRA_DCR_REGISTRATION_TOKEN` (recommended).
+- Keep `ENTRA_DCR_ALLOW_UNAUTHENTICATED=false` in enterprise environments.
+- Keep `SERVICENOW_REQUESTED_FOR_DIAGNOSTICS_INCLUDE_PII=false` unless you are actively debugging and have an approved retention path.
+- Prefer `SERVICENOW_REQUIRE_CALLER_ACCESS_TOKEN=true` when enterprise policy requires per-user ServiceNow ACL enforcement.
 
 See [SECURITY.md](SECURITY.md) for full guidelines.
+
+---
+
+## Engineering Guardrails
+
+Apply these rules for every new feature, bug fix, refactor, or deployment-related change in this repository.
+
+### Local Development Files
+
+- Treat `local.settings.json` as developer-local configuration.
+- Do not sanitize, template, overwrite, or reformat `local.settings.json` unless the user explicitly asks for that file to be changed.
+- Apply security improvements in committed source files, scripts, infrastructure, and docs instead of rewriting local developer secrets files.
+
+### Logging And Diagnostics
+
+- Route new operational logs through the structured logger in `src/utils/logger.ts`.
+- Never log secrets, bearer tokens, passwords, client secrets, function keys, cookies, or raw authorization headers.
+- Do not log caller PII by default. Any diagnostics that may expose user identity must be opt-in and disabled by default.
+- Keep error output sanitized. Avoid returning or logging full upstream payloads when they may contain tokens, identifiers, or request content.
+
+### Identity And Access
+
+- Prefer least privilege for both ServiceNow and Entra configuration.
+- Avoid broad ServiceNow roles when narrower ACLs or scoped access can satisfy the requirement.
+- Prefer delegated/per-user enforcement when enterprise requirements demand user-level authorization boundaries.
+- Do not add Microsoft Graph or unrelated Entra permissions unless they are strictly required by the implemented feature.
+
+### API And OAuth Surface
+
+- Use explicit CORS allowlists for browser-facing endpoints. Avoid wildcard origins for enterprise-exposed APIs.
+- Keep Dynamic Client Registration secure by default. Require a registration token unless open registration is an intentional, reviewed choice.
+- Preserve MCP protocol compatibility when changing transport, discovery, or tool metadata behavior.
+
+### Documentation Expectations
+
+- Update repo documentation whenever behavior, configuration, permissions, or security posture changes.
+- Add concise function-level comments when behavior is non-obvious, especially in auth, logging, transport, or security-sensitive code paths.
+- Document new environment variables, defaults, and security implications in the repo.
+
+### Review Standard
+
+Before considering a change complete, verify:
+
+- No secrets or PII were added to logs, responses, docs, or tracked files.
+- `local.settings.json` was left untouched unless explicitly requested.
+- New permissions are justified and minimized.
+- User-facing and operator-facing documentation matches the implementation.

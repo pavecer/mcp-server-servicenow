@@ -74,37 +74,8 @@ export function createMcpExpressApp(): express.Express {
     const method = req.method;
     const path = req.path;
 
-    // Suppress the noisy ServerResponse object logging from serverless-http internals
-    // by overriding console methods briefly during next()
-    const originalLog = console.log;
-    const originalWarn = console.warn;
-    let suppressLogging = false;
-
-    const captureOriginal = () => {
-      console.log = (msg: unknown, ...args: unknown[]) => {
-        // Only suppress ServerResponse object dumps; allow other console.logs
-        if (typeof msg === "string" && msg.includes("ServerResponse")) {
-          return;
-        }
-        originalLog.call(console, msg, ...args);
-      };
-      console.warn = (msg: unknown, ...args: unknown[]) => {
-        if (typeof msg === "string" && msg.includes("ServerResponse")) {
-          return;
-        }
-        originalWarn.call(console, msg, ...args);
-      };
-    };
-
-    const restoreOriginal = () => {
-      console.log = originalLog;
-      console.warn = originalWarn;
-    };
-
     // Hook response finish to log after response is sent
-    const originalEnd = res.end;
-    res.end = function (...args: unknown[]) {
-      restoreOriginal();
+    res.on("finish", () => {
       const durationMs = Date.now() - startTime;
       const statusCode = res.statusCode;
 
@@ -119,11 +90,7 @@ export function createMcpExpressApp(): express.Express {
       } else if (method === "POST") {
         Logger.info("MCP tool call completed", { operation: "tool_call", statusCode, durationMs });
       }
-
-      return originalEnd.apply(this, args as Parameters<typeof originalEnd>);
-    };
-
-    captureOriginal();
+    });
     next();
   });
 
@@ -235,11 +202,15 @@ export function createMcpExpressApp(): express.Express {
       );
 
       res.on("finish", () => {
-        transport.close().catch(console.error);
-        server.close().catch(console.error);
+        transport.close().catch((error: unknown) => {
+          Logger.warn("Failed to close MCP transport", { operation: "transport.close_failed" }, error);
+        });
+        server.close().catch((error: unknown) => {
+          Logger.warn("Failed to close MCP server", { operation: "server.close_failed" }, error);
+        });
       });
     } catch (err) {
-      console.error("[MCP] request handling error:", err);
+      Logger.error("MCP request handling error", { operation: "mcp.request_failed" }, err);
       if (!res.headersSent) {
         res.status(500).json({ error: "internal_server_error" });
       }

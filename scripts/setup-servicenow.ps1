@@ -68,6 +68,19 @@ function Invoke-SnApi {
 function Write-Step { param([string]$Msg) Write-Host "`n==> $Msg" -ForegroundColor Cyan }
 function Write-Ok   { param([string]$Msg) Write-Host "    OK: $Msg" -ForegroundColor Green }
 function Write-Info { param([string]$Msg) Write-Host "    $Msg" -ForegroundColor Gray }
+function Mask-Secret {
+    param([string]$Value)
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return "(empty)"
+    }
+
+    if ($Value.Length -le 8) {
+        return "********"
+    }
+
+    return $Value.Substring(0, 4) + "..." + $Value.Substring($Value.Length - 4)
+}
 
 # ---------------------------------------------------------------------------
 # Validate connectivity
@@ -122,7 +135,7 @@ if ([string]::IsNullOrEmpty($clientSecret)) {
     Write-Host "    NOTE: Client Secret is masked in the API response. Retrieve it from the UI:" -ForegroundColor Yellow
     Write-Host "    System OAuth > Application Registry > $OAuthAppName > Client Secret (click lock icon)" -ForegroundColor Yellow
 } else {
-    Write-Ok "Client Secret retrieved"
+    Write-Ok "Client Secret retrieved: $(Mask-Secret -Value $clientSecret)"
 }
 
 # ---------------------------------------------------------------------------
@@ -227,7 +240,8 @@ Write-Host ""
 Write-Host "  -ServiceNowInstanceUrl  `"$baseUrl`""
 Write-Host "  -ServiceNowClientId     `"$clientId`""
 if (-not [string]::IsNullOrEmpty($clientSecret)) {
-    Write-Host "  -ServiceNowClientSecret `"$clientSecret`""
+    Write-Host "  -ServiceNowClientSecret `"$(Mask-Secret -Value $clientSecret)`""
+    Write-Host "    (Use secure secret transfer to pass the full value; do not paste into shared logs.)"
 } else {
     Write-Host "  -ServiceNowClientSecret `"<retrieve from UI: System OAuth > Application Registry > $OAuthAppName>`""
 }
