@@ -50,12 +50,23 @@ The MCP server uses a shared service account (integration user) to authenticate 
 
 ## Step 3 — Assign Required Roles
 
-The integration user needs these roles to support all MCP operations:
+Start from least privilege. The integration user should only have access required for the APIs used by this server.
+
+Baseline roles:
 
 | Role | Purpose |
 |------|---------|
-| `catalog` | Search and read catalog items; browse catalogs and categories |
-| `itil` | Place orders (`order_now`) and read request records |
+| `catalog` | Search/read catalog items; browse catalogs and categories |
+| `itil` (optional) | Broad ServiceNow operational permissions. Prefer replacing with scoped ACLs where possible. |
+
+Preferred enterprise approach:
+- Keep `catalog` for catalog visibility.
+- Replace broad `itil` with explicit table/API ACLs for only:
+  - `sc_request` (read + update of requestor-owned records)
+  - `sc_req_item` (read + update for request enrichment)
+  - `sys_user` (read only for identity resolution)
+- Restrict visibility to approved catalogs/categories using user criteria.
+- If your security policy requires strict per-user access enforcement, set `SERVICENOW_REQUIRE_CALLER_ACCESS_TOKEN=true` and provide `x-servicenow-access-token` per caller.
 
 **To assign roles:**
 
@@ -67,7 +78,7 @@ The integration user needs these roles to support all MCP operations:
 > - **Read** access to the `sys_user` table (to resolve caller email → sys_id)
 > - **Write** access to the `sc_request` table (to patch `requested_for` after order creation)
 >
-> In most standard ServiceNow configurations the `itil` role already includes these. Verify with the validation tool after setup.
+> In many default environments `itil` enables this indirectly, but it is usually broader than required. Validate the final permission set with `validate_servicenow_configuration`.
 
 ---
 

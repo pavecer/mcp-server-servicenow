@@ -51,9 +51,7 @@ export function entraAuthMiddleware(req: Request, res: Response, next: NextFunct
   validateEntraToken(token, entra.tenantId, acceptedAudiences, entra.trustedTenantIds, entra.allowAnyTenant)
     .then(payload => {
       Logger.debug("Entra auth: token validated", {
-        operation: "entra_auth_success",
-        oid: payload.oid,
-        upn: payload.preferred_username || payload.upn
+        operation: "entra_auth_success"
       });
       res.locals.callerEntraObjectId = payload.oid;
       res.locals.callerUpn = payload.preferred_username || payload.upn;

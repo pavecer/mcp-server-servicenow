@@ -40,6 +40,35 @@ export interface PlaceOrderInput {
 export class ServiceNowClient {
   private readonly tokenManager = new TokenManager();
 
+  private static maskValue(value: string | null | undefined): string | null {
+    if (!value) {
+      return null;
+    }
+    if (value.length <= 4) {
+      return "****";
+    }
+    return `${value.slice(0, 2)}****${value.slice(-2)}`;
+  }
+
+  private shouldIncludeDiagnosticPii(): boolean {
+    return config.serviceNow.requestedForDiagnosticsIncludePii;
+  }
+
+  private withPiiPolicy(diagnostics: RequestedForDiagnostics): RequestedForDiagnostics {
+    if (this.shouldIncludeDiagnosticPii()) {
+      return diagnostics;
+    }
+
+    return {
+      ...diagnostics,
+      resolvedRequestedFor: ServiceNowClient.maskValue(diagnostics.resolvedRequestedFor),
+      callerUpn: null,
+      callerEntraObjectId: null,
+      callerValues: [],
+      matchedLookupValue: null
+    };
+  }
+
   private isLikelyServiceNowSysId(value: string | undefined): boolean {
     return typeof value === "string" && /^[0-9a-f]{32}$/i.test(value);
   }
@@ -166,7 +195,7 @@ export class ServiceNowClient {
           if (lookupResult.sysId) {
             return {
               value: lookupResult.sysId,
-              diagnostics: {
+              diagnostics: this.withPiiPolicy({
                 source: "explicit",
                 explicitRequestedForProvided: true,
                 resolvedRequestedFor: lookupResult.sysId,
@@ -176,7 +205,7 @@ export class ServiceNowClient {
                 lookupFields,
                 matchedLookupField: lookupResult.matchedLookupField,
                 matchedLookupValue: lookupResult.matchedLookupValue
-              }
+              })
             };
           }
         } catch {
@@ -186,7 +215,7 @@ export class ServiceNowClient {
 
       return {
         value: requestedFor,
-        diagnostics: {
+        diagnostics: this.withPiiPolicy({
           source: "explicit",
           explicitRequestedForProvided: true,
           resolvedRequestedFor: requestedFor,
@@ -196,7 +225,7 @@ export class ServiceNowClient {
           lookupFields,
           matchedLookupField: null,
           matchedLookupValue: null
-        }
+        })
       };
     }
 
@@ -204,7 +233,7 @@ export class ServiceNowClient {
 
     if (callerValues.length === 0) {
       return {
-        diagnostics: {
+        diagnostics: this.withPiiPolicy({
           source: "none",
           explicitRequestedForProvided: false,
           resolvedRequestedFor: null,
@@ -214,7 +243,7 @@ export class ServiceNowClient {
           lookupFields,
           matchedLookupField: null,
           matchedLookupValue: null
-        }
+        })
       };
     }
 
@@ -224,7 +253,7 @@ export class ServiceNowClient {
         if (lookupResult.sysId) {
           return {
             value: lookupResult.sysId,
-            diagnostics: {
+            diagnostics: this.withPiiPolicy({
               source: "caller_lookup",
               explicitRequestedForProvided: false,
               resolvedRequestedFor: lookupResult.sysId,
@@ -234,7 +263,7 @@ export class ServiceNowClient {
               lookupFields,
               matchedLookupField: lookupResult.matchedLookupField,
               matchedLookupValue: lookupResult.matchedLookupValue
-            }
+            })
           };
         }
       } catch {
@@ -244,7 +273,7 @@ export class ServiceNowClient {
 
     if (!config.serviceNow.requestedForFallbackToCallerValue) {
       return {
-        diagnostics: {
+        diagnostics: this.withPiiPolicy({
           source: "none",
           explicitRequestedForProvided: false,
           resolvedRequestedFor: null,
@@ -254,14 +283,14 @@ export class ServiceNowClient {
           lookupFields,
           matchedLookupField: null,
           matchedLookupValue: null
-        }
+        })
       };
     }
 
     // Use first configured caller value (for example callerUpn) when lookup does not resolve.
     return {
       value: callerValues[0],
-      diagnostics: {
+      diagnostics: this.withPiiPolicy({
         source: "caller_fallback",
         explicitRequestedForProvided: false,
         resolvedRequestedFor: callerValues[0],
@@ -271,7 +300,7 @@ export class ServiceNowClient {
         lookupFields,
         matchedLookupField: null,
         matchedLookupValue: null
-      }
+      })
     };
   }
 
@@ -337,7 +366,6 @@ export class ServiceNowClient {
     try {
       Logger.debug("Searching ServiceNow catalog", {
         operation: "catalog.search",
-        query: text,
         limit: options?.limit ?? 20,
         catalogSysId: options?.catalogSysId,
         categorySysId: options?.categorySysId
@@ -365,15 +393,13 @@ export class ServiceNowClient {
       const items = response.data.result || [];
       Logger.debug("Catalog search completed", {
         operation: "catalog.search_completed",
-        foundCount: items.length,
-        query: text
+        foundCount: items.length
       });
 
       return items;
     } catch (error) {
       Logger.error("Catalog search failed", {
-        operation: "catalog.search_failed",
-        query: text
+        operation: "catalog.search_failed"
       }, error);
       throw error;
     }
@@ -392,7 +418,7 @@ export class ServiceNowClient {
       const axiosError = error as { response?: { status?: number; data?: { error?: { message?: string } } } };
       if (axiosError?.response?.status === 400) {
         const snMessage = axiosError.response.data?.error?.message ?? "Catalog item not found or not accessible";
-        Logger.warn("Catalog item not found", { operation: "catalog.get_item", itemSysId, snMessage });
+        Logger.warn("Catalog item not found", { operation: "catalog.get_item", itemSysId });
         throw new Error(`Catalog item '${itemSysId}' not found: ${snMessage}. Use search_catalog_items to find available items and their correct sys_id values.`);
       }
       throw error;
@@ -419,7 +445,6 @@ export class ServiceNowClient {
         itemSysId,
         quantity: input.quantity ?? 1,
         requestedForSource: requestedForResolution.diagnostics.source,
-        resolvedRequestedFor: requestedForResolution.diagnostics.resolvedRequestedFor,
         usedCallerServiceNowToken: Boolean(getRequestContext()?.serviceNowAccessToken)
       });
 
@@ -438,34 +463,31 @@ export class ServiceNowClient {
       ) {
         try {
           await this.updateRequestRequestedFor(client, requestSysId, resolvedRequestedFor);
-        await this.updateRequestItemsRequestedFor(client, requestSysId, resolvedRequestedFor);
-        Logger.debug("Order requestedFor field patched", {
-          operation: "order.requestedFor_patched",
-          itemSysId,
-          requestSysId,
-          requestedForSysId: resolvedRequestedFor
-        });
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        Logger.warn("Failed to patch order requestedFor field", {
-          operation: "order.requestedFor_patch_failed",
-          itemSysId,
-          requestSysId,
-          requestedForSysId: resolvedRequestedFor
-        }, error);
+          await this.updateRequestItemsRequestedFor(client, requestSysId, resolvedRequestedFor);
+          Logger.debug("Order requestedFor field patched", {
+            operation: "order.requestedFor_patched",
+            itemSysId,
+            requestSysId
+          });
+        } catch (error) {
+          Logger.warn("Failed to patch order requestedFor field", {
+            operation: "order.requestedFor_patch_failed",
+            itemSysId,
+            requestSysId
+          }, error);
+        }
       }
-    }
 
-    Logger.info("Order placed successfully", {
-      operation: "order.placed",
-      itemSysId,
-      requestSysId: response.data.result.sys_id
-    });
+      Logger.info("Order placed successfully", {
+        operation: "order.placed",
+        itemSysId,
+        requestSysId: response.data.result.sys_id
+      });
 
-    return {
-      result: response.data.result,
-      requestedForDiagnostics: requestedForResolution.diagnostics
-    };
+      return {
+        result: response.data.result,
+        requestedForDiagnostics: requestedForResolution.diagnostics
+      };
     } catch (error) {
       Logger.error("Order placement failed", {
         operation: "order.place_failed",
@@ -503,7 +525,9 @@ export class ServiceNowClient {
 
     // If we can't determine the user sys_id, we can't list their orders
     if (!currentUserSysId) {
-      console.warn("[ServiceNowClient.listUserOrders] Unable to determine current user sys_id");
+      Logger.warn("Unable to determine current user sys_id", {
+        operation: "orders.list_user_unresolved"
+      });
       return [];
     }
 
@@ -598,12 +622,10 @@ export class ServiceNowClient {
               requestItems: enrichedItems
             };
           } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            console.warn(
-              "[ServiceNowClient.listUserOrders.enrichment] Error fetching items for request:",
-              requestSysId,
-              errorMessage
-            );
+            Logger.warn("Failed to enrich request items", {
+              operation: "orders.list_enrichment_failed",
+              requestSysId
+            }, error);
             // Return request without items if enrichment fails
             return {
               ...request,
@@ -615,8 +637,9 @@ export class ServiceNowClient {
 
       return enrichedRequests;
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      console.error("[ServiceNowClient.listUserOrders] Error listing orders:", errorMessage);
+      Logger.error("Failed to list user orders", {
+        operation: "orders.list_failed"
+      }, error);
       throw error;
     }
   }
@@ -635,8 +658,10 @@ export class ServiceNowClient {
 
       return response.data.result;
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      console.error("[ServiceNowClient.updateOrder] Error updating order:", errorMessage);
+      Logger.error("Failed to update order", {
+        operation: "orders.update_failed",
+        requestSysId
+      }, error);
       throw error;
     }
   }

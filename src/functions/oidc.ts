@@ -28,16 +28,15 @@ import { config } from "../config";
  *        Returns 404 when ENTRA_CLIENT_SECRET is not configured (the "Dynamic"
  *        or "Manual" Copilot Studio auth types can be used instead).
  *
- *        SECURITY NOTE: This endpoint is unauthenticated by design when no
- *        initial access token is configured — RFC 7591 DCR allows clients to
- *        register without prior credentials.  To restrict access, set
- *        ENTRA_DCR_REGISTRATION_TOKEN to a strong random secret; the endpoint
- *        will then require "Authorization: Bearer <token>" before returning
- *        credentials.  If Copilot Studio's automated DCR call supports sending
- *        custom auth headers, configure it to include the token.  Alternatively,
- *        protect the Function App at the network level (VNet integration /
- *        Private Endpoints), or clear ENTRA_CLIENT_SECRET to disable DCR
- *        entirely and use the "Dynamic" or "Manual" wizard option instead.
+ *        SECURITY NOTE: This endpoint is closed by default unless one of these
+ *        conditions is met:
+ *        - ENTRA_DCR_REGISTRATION_TOKEN is set and provided as
+ *          "Authorization: Bearer <token>"
+ *        - ENTRA_DCR_ALLOW_UNAUTHENTICATED=true is explicitly set
+ *
+ *        For enterprise deployments, keep unauthenticated DCR disabled and use
+ *        registration tokens, network restrictions (private networking), and/or
+ *        manual OAuth configuration in Copilot Studio.
  *
  * CORS: All endpoints include Access-Control-Allow-Origin: * headers and handle
  * OPTIONS preflight requests so that browser-based clients (including Copilot
@@ -49,11 +48,26 @@ const MS_METADATA_CACHE_TTL_MS = OIDC_CACHE_MAX_AGE_SECONDS * 1_000;
 
 // CORS headers included on every OIDC response so that browser-based clients
 // (including Microsoft Copilot Studio) can reach these endpoints cross-origin.
-const CORS_HEADERS: Record<string, string> = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization"
-};
+function buildCorsHeaders(origin?: string | null): Record<string, string> {
+  const base: Record<string, string> = {
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    Vary: "Origin"
+  };
+
+  if (!origin) {
+    return base;
+  }
+
+  if (config.http.corsAllowedOrigins.includes(origin)) {
+    return {
+      ...base,
+      "Access-Control-Allow-Origin": origin
+    };
+  }
+
+  return base;
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -141,9 +155,10 @@ async function oidcDiscoveryHandler(
   const { tenantId, clientId } = config.entraAuth;
 
   if (!tenantId || !clientId) {
+    const corsHeaders = buildCorsHeaders(request.headers.get("origin"));
     return {
       status: 404,
-      headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+      headers: { "Content-Type": "application/json", ...corsHeaders },
       body: JSON.stringify({ error: "Entra ID is not configured on this server" })
     };
   }
@@ -227,7 +242,7 @@ async function oidcDiscoveryHandler(
       "Content-Type": "application/json",
       // Allow browsers / clients to cache the discovery document.
       "Cache-Control": `public, max-age=${OIDC_CACHE_MAX_AGE_SECONDS}`,
-      ...CORS_HEADERS
+      ...buildCorsHeaders(request.headers.get("origin"))
     },
     body: JSON.stringify(discoveryDoc)
   };
@@ -245,9 +260,9 @@ app.http("oidc-discovery-options", {
   methods: ["OPTIONS"],
   authLevel: "anonymous",
   route: ".well-known/openid-configuration",
-  handler: async (): Promise<HttpResponseInit> => ({
+  handler: async (request): Promise<HttpResponseInit> => ({
     status: 204,
-    headers: CORS_HEADERS
+    headers: buildCorsHeaders(request.headers.get("origin"))
   })
 });
 
@@ -267,9 +282,9 @@ app.http("oidc-discovery-options", {
     methods: ["OPTIONS"],
     authLevel: "anonymous",
     route: ".well-known/oauth-authorization-server",
-    handler: async (): Promise<HttpResponseInit> => ({
+    handler: async (request): Promise<HttpResponseInit> => ({
       status: 204,
-      headers: CORS_HEADERS
+      headers: buildCorsHeaders(request.headers.get("origin"))
     })
   });
 
@@ -286,9 +301,10 @@ app.http("oidc-discovery-options", {
     const { tenantId, clientId } = config.entraAuth;
 
     if (!tenantId || !clientId) {
+      const corsHeaders = buildCorsHeaders(request.headers.get("origin"));
       return {
         status: 404,
-        headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+        headers: { "Content-Type": "application/json", ...corsHeaders },
         body: JSON.stringify({ error: "Entra ID is not configured on this server" })
       };
     }
@@ -310,7 +326,7 @@ app.http("oidc-discovery-options", {
       headers: {
         "Content-Type": "application/json",
         "Cache-Control": `public, max-age=${OIDC_CACHE_MAX_AGE_SECONDS}`,
-        ...CORS_HEADERS
+        ...buildCorsHeaders(request.headers.get("origin"))
       },
       body: JSON.stringify(metadata)
     };
@@ -327,9 +343,9 @@ app.http("oidc-discovery-options", {
     methods: ["OPTIONS"],
     authLevel: "anonymous",
     route: ".well-known/oauth-protected-resource",
-    handler: async (): Promise<HttpResponseInit> => ({
+    handler: async (request): Promise<HttpResponseInit> => ({
       status: 204,
-      headers: CORS_HEADERS
+      headers: buildCorsHeaders(request.headers.get("origin"))
     })
   });
 
@@ -342,17 +358,35 @@ async function oauthRegisterHandler(
   _context: InvocationContext
 ): Promise<HttpResponseInit> {
   const { clientId, clientSecret, dcrRegistrationToken } = config.entraAuth;
+  const corsHeaders = buildCorsHeaders(request.headers.get("origin"));
 
   if (!clientId || !clientSecret) {
     return {
       status: 404,
-      headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+      headers: { "Content-Type": "application/json", ...corsHeaders },
       body: JSON.stringify({
         error: "invalid_client_metadata",
         error_description:
           "Dynamic Client Registration is not enabled on this server. " +
           "Use 'Dynamic' or 'Manual' OAuth type in Copilot Studio and provide " +
           "the Entra application credentials manually."
+      })
+    };
+  }
+
+  // Secure-by-default policy: do not allow unauthenticated registration unless explicitly enabled.
+  if (!dcrRegistrationToken && !config.entraAuth.dcrAllowUnauthenticated) {
+    return {
+      status: 403,
+      headers: {
+        "Content-Type": "application/json",
+        ...corsHeaders
+      },
+      body: JSON.stringify({
+        error: "access_denied",
+        error_description:
+          "Dynamic Client Registration is disabled without a registration token. " +
+          "Set ENTRA_DCR_REGISTRATION_TOKEN or explicitly set ENTRA_DCR_ALLOW_UNAUTHENTICATED=true."
       })
     };
   }
@@ -374,7 +408,7 @@ async function oauthRegisterHandler(
         headers: {
           "Content-Type": "application/json",
           "WWW-Authenticate": 'Bearer realm="oauth-register"',
-          ...CORS_HEADERS
+          ...corsHeaders
         },
         body: JSON.stringify({
           error: "unauthorized",
@@ -402,7 +436,7 @@ async function oauthRegisterHandler(
 
   return {
     status: 201,
-    headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+    headers: { "Content-Type": "application/json", ...corsHeaders },
     body: JSON.stringify(registrationResponse)
   };
 }
@@ -420,9 +454,9 @@ app.http("oauth-register-get", {
   methods: ["GET"],
   authLevel: "anonymous",
   route: "oauth/register",
-  handler: async (): Promise<HttpResponseInit> => ({
+  handler: async (request): Promise<HttpResponseInit> => ({
     status: 200,
-    headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+    headers: { "Content-Type": "application/json", ...buildCorsHeaders(request.headers.get("origin")) },
     body: JSON.stringify({
       registration_endpoint: "/oauth/register",
       registration_policy: "post-required"
@@ -435,8 +469,8 @@ app.http("oauth-register-options", {
   methods: ["OPTIONS"],
   authLevel: "anonymous",
   route: "oauth/register",
-  handler: async (): Promise<HttpResponseInit> => ({
+  handler: async (request): Promise<HttpResponseInit> => ({
     status: 204,
-    headers: CORS_HEADERS
+    headers: buildCorsHeaders(request.headers.get("origin"))
   })
 });
