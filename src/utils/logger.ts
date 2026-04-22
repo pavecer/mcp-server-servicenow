@@ -79,8 +79,19 @@ export class Logger {
     return Logger.sanitizeString(String(value));
   }
 
+  private static getMinLogLevel(): LogLevel {
+    const configuredLevel = Logger.MIN_LOG_LEVEL;
+
+    if (configuredLevel in Logger.LOG_LEVELS) {
+      return configuredLevel as LogLevel;
+    }
+
+    return "info";
+  }
+
   private static shouldLog(level: LogLevel): boolean {
-    return Logger.LOG_LEVELS[level] >= Logger.LOG_LEVELS[Logger.MIN_LOG_LEVEL];
+    const minLogLevel = Logger.getMinLogLevel();
+    return Logger.LOG_LEVELS[level] >= Logger.LOG_LEVELS[minLogLevel];
   }
 
   private static formatLog(entry: LogEntry): string {
