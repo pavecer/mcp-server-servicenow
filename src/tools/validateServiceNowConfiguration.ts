@@ -69,8 +69,7 @@ function createClient(accessToken: string): AxiosInstance {
   });
 }
 
-export function registerValidateServiceNowConfigurationTool(server: McpServer): void {
-  const tokenManager = new TokenManager();
+export function registerValidateServiceNowConfigurationTool(server: McpServer, tokenManager: TokenManager): void {
 
   server.tool(
     "validate_servicenow_configuration",
@@ -78,7 +77,7 @@ export function registerValidateServiceNowConfigurationTool(server: McpServer): 
       "Validate ServiceNow OAuth/token configuration and effective catalog permissions.",
       "This tool checks whether authentication works and whether core Service Catalog APIs are reachable.",
       "By default, if header x-servicenow-access-token is provided, that caller token is used.",
-      "Set forceClientCredentials=true to validate app-level credentials regardless of caller header.",
+      "Set forceConfiguredCredentials=true to ignore the caller header and validate the configured app credentials (password or client_credentials grant, per SERVICENOW_OAUTH_GRANT_TYPE).",
       "Set probeOrderNow=true only when you explicitly want to test order endpoint access; this may create a request in ServiceNow."
     ].join(" "),
     {
@@ -96,11 +95,11 @@ export function registerValidateServiceNowConfigurationTool(server: McpServer): 
         .optional()
         .default(5)
         .describe("Maximum number of items to request during validation"),
-      forceClientCredentials: z
+      forceConfiguredCredentials: z
         .boolean()
         .optional()
         .default(false)
-        .describe("When true, ignore x-servicenow-access-token and validate configured client credentials"),
+        .describe("When true, ignore x-servicenow-access-token and validate the configured app credentials (password or client_credentials grant)"),
       probeOrderNow: z
         .boolean()
         .optional()
@@ -115,15 +114,15 @@ export function registerValidateServiceNowConfigurationTool(server: McpServer): 
         .optional()
         .describe("Variables payload used for the optional order probe")
     },
-    async ({ query, limit, forceClientCredentials, probeOrderNow, orderProbeItemSysId, orderProbeVariables }) => {
+    async ({ query, limit, forceConfiguredCredentials, probeOrderNow, orderProbeItemSysId, orderProbeVariables }) => {
       const checks: ValidationCheck[] = [];
       const callerToken = getRequestContext()?.serviceNowAccessToken;
 
       let accessToken: string;
-      let authMode: "caller_token" | "client_credentials";
+      let authMode: "caller_token" | "configured_credentials";
 
       try {
-        if (!forceClientCredentials && callerToken) {
+        if (!forceConfiguredCredentials && callerToken) {
           accessToken = callerToken;
           authMode = "caller_token";
           pushCheck(checks, {
@@ -133,17 +132,17 @@ export function registerValidateServiceNowConfigurationTool(server: McpServer): 
           });
         } else {
           accessToken = await tokenManager.getAccessToken();
-          authMode = "client_credentials";
+          authMode = "configured_credentials";
           pushCheck(checks, {
-            name: "auth.client_credentials",
+            name: "auth.configured_credentials",
             status: "passed",
-            message: "Successfully acquired access token via client_credentials"
+            message: "Successfully acquired access token from configured ServiceNow app credentials"
           });
         }
       } catch (err) {
         const details = extractAxiosError(err);
         pushCheck(checks, {
-          name: "auth.client_credentials",
+          name: "auth.configured_credentials",
           status: "failed",
           message: `Unable to obtain token: ${details.message}`,
           httpStatus: details.status
@@ -157,12 +156,12 @@ export function registerValidateServiceNowConfigurationTool(server: McpServer): 
               text: JSON.stringify(
                 {
                   ok: false,
-                  authModeTried: forceClientCredentials ? "client_credentials_forced" : "client_credentials_or_caller_token",
+                  authModeTried: forceConfiguredCredentials ? "configured_credentials_forced" : "configured_credentials_or_caller_token",
                   summary,
                   checks,
                   recommendations: [
                     "Verify SERVICENOW_INSTANCE_URL, SERVICENOW_CLIENT_ID, SERVICENOW_CLIENT_SECRET, and SERVICENOW_OAUTH_TOKEN_PATH.",
-                    "Confirm the OAuth app in ServiceNow allows client_credentials token issuance."
+                    "Confirm the configured OAuth grant (SERVICENOW_OAUTH_GRANT_TYPE) is permitted by the ServiceNow OAuth app."
                   ]
                 },
                 null,

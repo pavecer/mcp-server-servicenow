@@ -1,7 +1,7 @@
 import { app, HttpRequest, HttpResponseInit, InvocationContext } from "@azure/functions";
 import express, { Request, Response } from "express";
 import serverlessHttp from "serverless-http";
-import { ServiceNowClient } from "../services/servicenowClient";
+import { sharedServiceNowClient } from "../services/instances";
 import { buildCatalogItemSelectionAdaptiveCard, buildOrderFormAdaptiveCard, buildOrderConfirmationAdaptiveCard } from "../utils/adaptiveCards";
 import { entraAuthMiddleware } from "../utils/entraAuthMiddleware";
 import { runWithRequestContext } from "../requestContext";
@@ -32,7 +32,7 @@ import { config } from "../config";
  * Once registered, use InvokeConnectorAction in topics to call them.
  */
 
-const catalogClient = new ServiceNowClient();
+const catalogClient = sharedServiceNowClient;
 
 function buildCorsHeaders(origin?: string | null): Record<string, string> {
   const base: Record<string, string> = {

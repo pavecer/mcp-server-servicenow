@@ -3,9 +3,7 @@ import { z } from "zod";
 import { ServiceNowClient } from "../services/servicenowClient";
 import { buildCatalogItemSelectionAdaptiveCard } from "../utils/adaptiveCards";
 
-const client = new ServiceNowClient();
-
-export function registerSearchCatalogItemsTool(server: McpServer): void {
+export function registerSearchCatalogItemsTool(server: McpServer, client: ServiceNowClient): void {
   server.tool(
     "search_catalog_items",
     [

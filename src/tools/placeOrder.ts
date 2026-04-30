@@ -4,9 +4,7 @@ import { ServiceNowClient } from "../services/servicenowClient";
 import { buildOrderConfirmationAdaptiveCard } from "../utils/adaptiveCards";
 import { config } from "../config";
 
-const client = new ServiceNowClient();
-
-export function registerPlaceOrderTool(server: McpServer): void {
+export function registerPlaceOrderTool(server: McpServer, client: ServiceNowClient): void {
   server.tool(
     "place_order",
     [

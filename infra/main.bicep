@@ -48,6 +48,72 @@ param entraTrustedTenantIds string = ''
 @description('Allow tokens from any Entra tenant (true/false). Keep false for production unless explicitly required.')
 param entraAllowAnyTenant string = 'false'
 
+@description('Disable Entra Bearer validation entirely (true/false). MUST be "false" in production.')
+@allowed([ 'true', 'false' ])
+param entraAuthDisabled string = 'false'
+
+@description('Space-delimited Entra OAuth scopes advertised in OIDC discovery and DCR.')
+param entraOauthScopes string = ''
+
+@description('RFC 7591 initial access token required on POST /oauth/register. Stored in Key Vault when set.')
+@secure()
+param entraDcrRegistrationToken string = ''
+
+@description('Allow unauthenticated Dynamic Client Registration (true/false). Keep "false" for production.')
+@allowed([ 'true', 'false' ])
+param entraDcrAllowUnauthenticated string = 'false'
+
+@description('Comma-separated list of additional accepted audience values for Entra tokens.')
+param entraAllowedAudiences string = ''
+
+@description('Comma-separated list of browser origins allowed for CORS-enabled endpoints.')
+param corsAllowedOrigins string = ''
+
+@description('Require x-servicenow-access-token from caller (true/false). Disables fallback to integration user.')
+@allowed([ 'true', 'false' ])
+param serviceNowRequireCallerAccessToken string = 'false'
+
+@description('ServiceNow OAuth token endpoint path. Override only if your instance uses a non-standard path.')
+param serviceNowOauthTokenPath string = '/oauth_token.do'
+
+@description('ServiceNow OAuth grant strategy: auto, password, or client_credentials.')
+@allowed([ 'auto', 'password', 'client_credentials' ])
+param serviceNowOauthGrantType string = 'auto'
+
+@description('ServiceNow OAuth client auth style: auto, request_body, or basic.')
+@allowed([ 'auto', 'request_body', 'basic' ])
+param serviceNowOauthClientAuthStyle string = 'auto'
+
+@description('Comma-separated sys_user fields used to resolve requested_for from caller identity.')
+param serviceNowRequestedForLookupFields string = 'email,user_name'
+
+@description('Comma-separated caller-context fields used as candidates for requested_for resolution.')
+param serviceNowRequestedForCallerFields string = 'callerUpn'
+
+@description('When "true" (default) fall back to the raw caller value when sys_user lookup does not resolve.')
+@allowed([ 'true', 'false' ])
+param serviceNowRequestedForFallbackToCallerValue string = 'true'
+
+@description('Emit requested_for diagnostics in tool responses (true/false). Use only for short-lived troubleshooting.')
+@allowed([ 'true', 'false' ])
+param serviceNowRequestedForDiagnostics string = 'false'
+
+@description('Include caller PII in diagnostics (true/false). Requires serviceNowRequestedForDiagnostics=true.')
+@allowed([ 'true', 'false' ])
+param serviceNowRequestedForDiagnosticsIncludePii string = 'false'
+
+@description('Minimum log level: debug, info, warn, or error.')
+@allowed([ 'debug', 'info', 'warn', 'error' ])
+param logLevel string = 'info'
+
+@description('Include caller identity (oid, upn) in structured log entries (true/false).')
+@allowed([ 'true', 'false' ])
+param logIncludeCallerIdentity string = 'false'
+
+@description('Include error stack traces in structured log entries (true/false).')
+@allowed([ 'true', 'false' ])
+param logIncludeErrorStack string = 'false'
+
 // ---------------------------------------------------------------------------
 // Variables
 // ---------------------------------------------------------------------------
@@ -131,6 +197,14 @@ resource entraClientSecretKeyVaultSecret 'Microsoft.KeyVault/vaults/secrets@2023
   }
 }
 
+resource entraDcrRegistrationTokenKeyVaultSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (!empty(entraDcrRegistrationToken)) {
+  parent: keyVault
+  name: 'entra-dcr-registration-token'
+  properties: {
+    value: entraDcrRegistrationToken
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Storage Account (used for function deployment packages)
 // ---------------------------------------------------------------------------
@@ -203,24 +277,44 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
           name: 'SERVICENOW_CLIENT_SECRET'
           value: '@Microsoft.KeyVault(SecretUri=${serviceNowClientSecretKeyVaultSecret.properties.secretUriWithVersion})'
         }
-        { name: 'SERVICENOW_OAUTH_TOKEN_PATH', value: '/oauth_token.do' }
-        { name: 'SERVICENOW_OAUTH_GRANT_TYPE', value: 'auto' }
+        { name: 'SERVICENOW_OAUTH_TOKEN_PATH', value: serviceNowOauthTokenPath }
+        { name: 'SERVICENOW_OAUTH_GRANT_TYPE', value: serviceNowOauthGrantType }
+        { name: 'SERVICENOW_OAUTH_CLIENT_AUTH_STYLE', value: serviceNowOauthClientAuthStyle }
         { name: 'SERVICENOW_USERNAME', value: serviceNowUsername }
         {
           name: 'SERVICENOW_PASSWORD'
           // Reference Key Vault when a password was provided; otherwise empty.
-          value: empty(serviceNowPassword) ? '' : '@Microsoft.KeyVault(SecretUri=${serviceNowPasswordKeyVaultSecret.properties.secretUriWithVersion})'
+          value: empty(serviceNowPassword) ? '' : '@Microsoft.KeyVault(SecretUri=${serviceNowPasswordKeyVaultSecret!.properties.secretUriWithVersion})'
         }
+        { name: 'SERVICENOW_REQUIRE_CALLER_ACCESS_TOKEN', value: serviceNowRequireCallerAccessToken }
+        { name: 'SERVICENOW_REQUESTED_FOR_LOOKUP_FIELDS', value: serviceNowRequestedForLookupFields }
+        { name: 'SERVICENOW_REQUESTED_FOR_CALLER_FIELDS', value: serviceNowRequestedForCallerFields }
+        { name: 'SERVICENOW_REQUESTED_FOR_FALLBACK_TO_CALLER_VALUE', value: serviceNowRequestedForFallbackToCallerValue }
+        { name: 'SERVICENOW_REQUESTED_FOR_DIAGNOSTICS', value: serviceNowRequestedForDiagnostics }
+        { name: 'SERVICENOW_REQUESTED_FOR_DIAGNOSTICS_INCLUDE_PII', value: serviceNowRequestedForDiagnosticsIncludePii }
         // Entra ID OAuth 2.0 configuration (optional)
         { name: 'ENTRA_TENANT_ID', value: entraTenantId }
         { name: 'ENTRA_CLIENT_ID', value: entraClientId }
         {
           name: 'ENTRA_CLIENT_SECRET'
-          value: empty(entraClientSecret) ? '' : '@Microsoft.KeyVault(SecretUri=${entraClientSecretKeyVaultSecret.properties.secretUriWithVersion})'
+          value: empty(entraClientSecret) ? '' : '@Microsoft.KeyVault(SecretUri=${entraClientSecretKeyVaultSecret!.properties.secretUriWithVersion})'
         }
         { name: 'ENTRA_AUDIENCE', value: entraAudience }
+        { name: 'ENTRA_ALLOWED_AUDIENCES', value: entraAllowedAudiences }
+        { name: 'ENTRA_OAUTH_SCOPES', value: entraOauthScopes }
         { name: 'ENTRA_TRUSTED_TENANT_IDS', value: entraTrustedTenantIds }
         { name: 'ENTRA_ALLOW_ANY_TENANT', value: entraAllowAnyTenant }
+        { name: 'ENTRA_AUTH_DISABLED', value: entraAuthDisabled }
+        {
+          name: 'ENTRA_DCR_REGISTRATION_TOKEN'
+          value: empty(entraDcrRegistrationToken) ? '' : '@Microsoft.KeyVault(SecretUri=${entraDcrRegistrationTokenKeyVaultSecret!.properties.secretUriWithVersion})'
+        }
+        { name: 'ENTRA_DCR_ALLOW_UNAUTHENTICATED', value: entraDcrAllowUnauthenticated }
+        // CORS / logging
+        { name: 'CORS_ALLOWED_ORIGINS', value: corsAllowedOrigins }
+        { name: 'LOG_LEVEL', value: logLevel }
+        { name: 'LOG_INCLUDE_CALLER_IDENTITY', value: logIncludeCallerIdentity }
+        { name: 'LOG_INCLUDE_ERROR_STACK', value: logIncludeErrorStack }
       ]
     }
     functionAppConfig: {

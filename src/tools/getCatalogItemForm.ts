@@ -3,9 +3,7 @@ import { z } from "zod";
 import { ServiceNowClient } from "../services/servicenowClient";
 import { buildOrderFormAdaptiveCard } from "../utils/adaptiveCards";
 
-const client = new ServiceNowClient();
-
-export function registerGetCatalogItemFormTool(server: McpServer): void {
+export function registerGetCatalogItemFormTool(server: McpServer, client: ServiceNowClient): void {
   const sysIdPattern = /^[0-9a-f]{32}$/i;
 
   server.tool(

@@ -24,7 +24,12 @@
     "ENTRA_OAUTH_SCOPES": "api://<ENTRA_CLIENT_ID>/access_as_user openid profile offline_access",
     "ENTRA_DCR_REGISTRATION_TOKEN": "",
     "ENTRA_DCR_ALLOW_UNAUTHENTICATED": "false",
+    "ENTRA_ALLOWED_AUDIENCES": "",
     "CORS_ALLOWED_ORIGINS": "",
-    "ENTRA_AUTH_DISABLED": "true"
+    "ENTRA_AUTH_DISABLED": "true",
+
+    "LOG_LEVEL": "info",
+    "LOG_INCLUDE_CALLER_IDENTITY": "false",
+    "LOG_INCLUDE_ERROR_STACK": "false"
   }
 }

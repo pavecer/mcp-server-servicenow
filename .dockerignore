@@ -1,12 +1,20 @@
 .git
 .gitignore
+.github
 .azure
+.vscode
 node_modules
 dist
 coverage
 
 local
 logs
+test
+vitest.config.ts
+
+scripts
+infra
+copilot-studio
 
 *.log
 *.har

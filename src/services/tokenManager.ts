@@ -1,6 +1,11 @@
 import axios from "axios";
+import https from "node:https";
 import { config } from "../config";
 import Logger from "../utils/logger";
+
+// Shared HTTPS keep-alive agent so repeated OAuth token requests reuse the
+// same TLS connection to the ServiceNow instance.
+const keepAliveAgent = new https.Agent({ keepAlive: true, maxSockets: 8 });
 
 interface OAuthTokenResponse {
   access_token: string;
@@ -177,7 +182,8 @@ export class TokenManager {
 
     return axios.post<OAuthTokenResponse>(tokenUrl, payload.toString(), {
       headers,
-      timeout: 10_000
+      timeout: 10_000,
+      httpsAgent: keepAliveAgent
     });
   }
 }

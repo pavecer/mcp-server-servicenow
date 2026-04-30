@@ -1,4 +1,5 @@
 import axios, { AxiosInstance } from "axios";
+import https from "node:https";
 import { config } from "../config";
 import {
   RequestedForDiagnostics,
@@ -10,6 +11,44 @@ import {
 import { TokenManager } from "./tokenManager";
 import { getRequestContext } from "../requestContext";
 import Logger from "../utils/logger";
+
+// Maximum number of concurrent ServiceNow REST calls per fan-out batch.
+// Keeps load on the ServiceNow instance bounded and avoids tripping per-user
+// rate limits when listUserOrders enriches many requests/items at once.
+const SERVICENOW_FANOUT_CONCURRENCY = 5;
+
+/**
+ * Runs `worker` for every item in `items` with at most `concurrency` calls in
+ * flight at any time. Preserves input order in the returned array. Errors
+ * thrown by `worker` propagate to the caller; existing in-flight tasks are
+ * still awaited via Promise.all semantics.
+ */
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  if (items.length === 0) {
+    return [];
+  }
+
+  const limit = Math.max(1, Math.min(concurrency, items.length));
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+
+  const runners = Array.from({ length: limit }, async () => {
+    while (true) {
+      const currentIndex = nextIndex++;
+      if (currentIndex >= items.length) {
+        return;
+      }
+      results[currentIndex] = await worker(items[currentIndex], currentIndex);
+    }
+  });
+
+  await Promise.all(runners);
+  return results;
+}
 
 interface SearchOptions {
   catalogSysId?: string;
@@ -38,7 +77,46 @@ export interface PlaceOrderInput {
 }
 
 export class ServiceNowClient {
-  private readonly tokenManager = new TokenManager();
+  private readonly tokenManager: TokenManager;
+  private readonly httpClient: AxiosInstance;
+
+  constructor(tokenManager?: TokenManager) {
+    this.tokenManager = tokenManager ?? new TokenManager();
+
+    // One axios instance per ServiceNowClient. The HTTPS keep-alive agent lets
+    // multiple ServiceNow REST calls (e.g. listUserOrders enrichment fan-out)
+    // reuse a single TLS connection to the instance, eliminating per-call TCP
+    // and TLS handshakes (often >150ms each on cold paths).
+    const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 32 });
+
+    this.httpClient = axios.create({
+      baseURL: config.serviceNow.instanceUrl,
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json"
+      },
+      timeout: 20_000,
+      httpsAgent
+    });
+
+    // Inject the per-request bearer token at call time. The token is taken
+    // from the active RequestContext (caller-provided x-servicenow-access-token)
+    // when present; otherwise the integration credentials are used. Throws when
+    // SERVICENOW_REQUIRE_CALLER_ACCESS_TOKEN=true and no caller token exists.
+    this.httpClient.interceptors.request.use(async (request) => {
+      const callerToken = getRequestContext()?.serviceNowAccessToken;
+      if (config.serviceNow.requireCallerAccessToken && !callerToken) {
+        throw new Error(
+          "ServiceNow caller access token is required. Provide x-servicenow-access-token so ServiceNow ACLs are enforced per user."
+        );
+      }
+
+      const token = callerToken || await this.tokenManager.getAccessToken();
+      request.headers = request.headers ?? {};
+      (request.headers as Record<string, string>).Authorization = `Bearer ${token}`;
+      return request;
+    });
+  }
 
   private static maskValue(value: string | null | undefined): string | null {
     if (!value) {
@@ -305,24 +383,7 @@ export class ServiceNowClient {
   }
 
   private async getClient(): Promise<AxiosInstance> {
-    const callerToken = getRequestContext()?.serviceNowAccessToken;
-    if (config.serviceNow.requireCallerAccessToken && !callerToken) {
-      throw new Error(
-        "ServiceNow caller access token is required. Provide x-servicenow-access-token so ServiceNow ACLs are enforced per user."
-      );
-    }
-
-    const token = callerToken || await this.tokenManager.getAccessToken();
-
-    return axios.create({
-      baseURL: config.serviceNow.instanceUrl,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/json",
-        "Content-Type": "application/json"
-      },
-      timeout: 20000
-    });
+    return this.httpClient;
   }
 
   private async updateRequestRequestedFor(
@@ -353,12 +414,10 @@ export class ServiceNowClient {
     );
 
     const items = itemsResponse.data.result || [];
-    await Promise.all(
-      items.map((item) =>
-        client.patch(`/api/now/table/sc_req_item/${item.sys_id}`, {
-          requested_for: requestedForSysId
-        })
-      )
+    await mapWithConcurrency(items, SERVICENOW_FANOUT_CONCURRENCY, (item) =>
+      client.patch(`/api/now/table/sc_req_item/${item.sys_id}`, {
+        requested_for: requestedForSysId
+      })
     );
   }
 
@@ -564,9 +623,9 @@ export class ServiceNowClient {
 
       const requests = response.data.result || [];
 
-      // Enrich each request with its related catalog items
-      const enrichedRequests = await Promise.all(
-        requests.map(async (request) => {
+      // Enrich each request with its related catalog items, capping concurrency
+      // so a 50-request page doesn't trigger 50 simultaneous ServiceNow calls.
+      const enrichedRequests = await mapWithConcurrency(requests, SERVICENOW_FANOUT_CONCURRENCY, async (request) => {
           const requestSysId = request.sys_id as string;
           try {
             // Fetch related items for this request from sc_req_item table
@@ -591,9 +650,8 @@ export class ServiceNowClient {
 
             const requestItems = itemsResponse.data.result || [];
 
-            // Enrich each item with catalog item details
-            const enrichedItems = await Promise.all(
-              requestItems.map(async (item) => {
+            // Enrich each item with catalog item details (also concurrency-capped).
+            const enrichedItems = await mapWithConcurrency(requestItems, SERVICENOW_FANOUT_CONCURRENCY, async (item) => {
                 const catItemId = item.cat_item_id as Record<string, unknown> | string | undefined;
                 const catItemSysId = typeof catItemId === "object" ? catItemId.value : catItemId;
 
@@ -614,7 +672,7 @@ export class ServiceNowClient {
                   // If we can't fetch catalog details, return item as-is
                   return item;
                 }
-              })
+              }
             );
 
             return {
@@ -632,7 +690,7 @@ export class ServiceNowClient {
               requestItems: []
             };
           }
-        })
+        }
       );
 
       return enrichedRequests;

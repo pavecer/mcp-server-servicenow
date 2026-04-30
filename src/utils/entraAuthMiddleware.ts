@@ -18,8 +18,27 @@ import Logger from "./logger";
 export function entraAuthMiddleware(req: Request, res: Response, next: NextFunction): void {
   const entra = config.entraAuth;
 
-  if (entra.disabled || !entra.tenantId || !entra.clientId) {
+  // Explicit bypass (local dev / smoke tests). MUST never be true in production.
+  if (entra.disabled) {
     next();
+    return;
+  }
+
+  // Fail closed: when not explicitly disabled, both tenantId and clientId are required.
+  // Returning 503 (instead of silently allowing the request) prevents a misconfigured
+  // deployment from accidentally exposing the MCP endpoint without authentication.
+  if (!entra.tenantId || !entra.clientId) {
+    Logger.error("Entra auth: misconfigured", {
+      operation: "entra_auth_misconfigured",
+      hasTenantId: Boolean(entra.tenantId),
+      hasClientId: Boolean(entra.clientId)
+    });
+    res.status(503).json({
+      error: "service_unavailable",
+      error_description:
+        "Entra ID authentication is misconfigured: ENTRA_TENANT_ID and ENTRA_CLIENT_ID are required. " +
+        "Set ENTRA_AUTH_DISABLED=true only for local development."
+    });
     return;
   }
 

@@ -1,5 +1,9 @@
 import crypto from "node:crypto";
+import https from "node:https";
 import axios from "axios";
+
+// Shared HTTPS keep-alive agent for JWKS fetches against login.microsoftonline.com.
+const keepAliveAgent = new https.Agent({ keepAlive: true, maxSockets: 8 });
 
 // ---------------------------------------------------------------------------
 // Types
@@ -43,7 +47,10 @@ const MAX_CLOCK_SKEW_SECONDS = 300; // 5 minutes
 const jwksCacheByTenant = new Map<string, JwksCache>();
 
 async function fetchJwks(jwksUri: string): Promise<Map<string, EntraJwk>> {
-  const { data } = await axios.get<{ keys: EntraJwk[] }>(jwksUri, { timeout: 10_000 });
+  const { data } = await axios.get<{ keys: EntraJwk[] }>(jwksUri, {
+    timeout: 10_000,
+    httpsAgent: keepAliveAgent
+  });
   return new Map(
     data.keys
       .filter(k => k.kid && k.kty === "RSA" && (!k.use || k.use === "sig"))

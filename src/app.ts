@@ -6,6 +6,7 @@ import { getMinimalToolDefinitions, registerTools } from "./tools/index";
 import { runWithRequestContext } from "./requestContext";
 import { config } from "./config";
 import { entraAuthMiddleware } from "./utils/entraAuthMiddleware";
+import { sharedServiceNowClient, sharedTokenManager } from "./services/instances";
 import Logger from "./utils/logger";
 
 /**
@@ -27,14 +28,24 @@ export function createMcpExpressApp(): express.Express {
     next();
   });
 
-  const setMcpHttpHeaders = (res: Response): void => {
+  const setMcpHttpHeaders = (req: Request, res: Response): void => {
     res.setHeader("Allow", "GET, POST, DELETE, OPTIONS");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
     res.setHeader(
       "Access-Control-Allow-Headers",
-      "accept, content-type, mcp-protocol-version, mcp-session-id, last-event-id, authorization, x-functions-key"
+      "accept, content-type, mcp-protocol-version, mcp-session-id, last-event-id, authorization, x-functions-key, x-servicenow-access-token"
     );
     res.setHeader("Access-Control-Expose-Headers", "mcp-session-id");
+    res.setHeader("Vary", "Origin");
+
+    // Only echo Access-Control-Allow-Origin for explicitly allowlisted origins.
+    // The MCP endpoint is primarily called server-to-server (Copilot Studio
+    // backend, smoke tests), so the default empty allowlist is correct. Browser
+    // clients must opt in via the CORS_ALLOWED_ORIGINS env var.
+    const requestOrigin = req.headers.origin;
+    if (typeof requestOrigin === "string" && config.http.corsAllowedOrigins.includes(requestOrigin)) {
+      res.setHeader("Access-Control-Allow-Origin", requestOrigin);
+    }
   };
 
   const normalizeAcceptHeader = (req: Request): void => {
@@ -108,8 +119,8 @@ export function createMcpExpressApp(): express.Express {
   expressApp.use((req: Request, res: Response, next) => {
     const entra = config.entraAuth;
 
-    // Skip when Entra auth is disabled or not configured.
-    if (entra.disabled || !entra.tenantId || !entra.clientId) {
+    // Skip when Entra auth is explicitly disabled (local dev only).
+    if (entra.disabled) {
       next();
       return;
     }
@@ -117,6 +128,8 @@ export function createMcpExpressApp(): express.Express {
     // Only enforce Bearer token auth on POST requests (MCP tool calls).
     // GET, DELETE, and OPTIONS are used for SSE, session management, and CORS
     // and must remain accessible without a token.
+    // For POST, the middleware itself fail-closes on partial configuration
+    // (returns 503 when tenantId or clientId is missing).
     if (req.method !== "POST") {
       next();
       return;
@@ -125,7 +138,7 @@ export function createMcpExpressApp(): express.Express {
   });
 
   expressApp.use((req: Request, res: Response, next) => {
-    setMcpHttpHeaders(res);
+    setMcpHttpHeaders(req, res);
 
     if (req.method === "OPTIONS") {
       res.status(204).end();
@@ -164,7 +177,7 @@ export function createMcpExpressApp(): express.Express {
       version: "1.0.0"
     });
 
-    registerTools(server);
+    registerTools(server, sharedServiceNowClient, sharedTokenManager);
 
     // Copilot Studio currently appears sensitive to extra MCP SDK fields such as
     // execution metadata and some richer JSON Schema keywords. Override tools/list

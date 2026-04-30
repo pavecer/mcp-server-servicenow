@@ -1,4 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { ServiceNowClient } from "../services/servicenowClient";
+import { TokenManager } from "../services/tokenManager";
 import { registerSearchCatalogItemsTool } from "./searchCatalogItems";
 import { registerGetCatalogItemFormTool } from "./getCatalogItemForm";
 import { registerPlaceOrderTool } from "./placeOrder";
@@ -7,6 +9,12 @@ import { registerListUserOrdersTool } from "./listUserOrders";
 import { registerUpdateOrderTool } from "./updateOrder";
 
 export function getMinimalToolDefinitions() {
+  // NOTE: This minimal manifest is hand-maintained and intentionally returned
+  // by the MCP tools/list handler instead of the SDK-derived schema. Copilot
+  // Studio's MCP client has historically rejected manifests that include
+  // execution metadata or richer JSON Schema keywords (oneOf/anyOf, format,
+  // negative numeric bounds, etc.). KEEP IN SYNC with the Zod schemas in each
+  // tool file when adding/removing parameters or changing types.
   return [
     {
       name: "search_catalog_items",
@@ -28,7 +36,9 @@ export function getMinimalToolDefinitions() {
           },
           limit: {
             type: "integer",
-            description: "Optional maximum number of results"
+            minimum: 1,
+            maximum: 50,
+            description: "Optional maximum number of results (1-50, default 25)"
           }
         },
         required: ["query"]
@@ -60,18 +70,19 @@ export function getMinimalToolDefinitions() {
           },
           variables: {
             type: "object",
-            description: "Form field values keyed by variable name",
+            description: "Form field values keyed by variable name. Values may be string, number, or boolean.",
             additionalProperties: {
-              type: "string"
+              type: ["string", "number", "boolean"]
             }
           },
           quantity: {
             type: "integer",
-            description: "Optional order quantity"
+            minimum: 1,
+            description: "Optional order quantity (default 1)"
           },
           requestedFor: {
             type: "string",
-            description: "Optional requested-for user"
+            description: "Optional sys_id or email of the user the item is being ordered for"
           }
         },
         required: ["itemSysId", "variables"]
@@ -91,9 +102,9 @@ export function getMinimalToolDefinitions() {
             type: "integer",
             description: "Optional maximum number of validation results"
           },
-          forceClientCredentials: {
+          forceConfiguredCredentials: {
             type: "boolean",
-            description: "Use configured client credentials instead of caller token"
+            description: "Use configured app credentials (password or client_credentials grant) instead of the caller's x-servicenow-access-token"
           },
           probeOrderNow: {
             type: "boolean",
@@ -121,6 +132,7 @@ export function getMinimalToolDefinitions() {
         properties: {
           limit: {
             type: "integer",
+            minimum: 1,
             description: "Maximum number of orders to return (default: 50)"
           },
           fields: {
@@ -135,7 +147,7 @@ export function getMinimalToolDefinitions() {
     },
     {
       name: "update_order",
-      description: "Update a service catalog order from the requestor's perspective.",
+      description: "Update a service catalog order from the requestor's perspective. Allowed fields: short_description, description, comments, urgency, priority.",
       inputSchema: {
         type: "object",
         properties: {
@@ -145,8 +157,15 @@ export function getMinimalToolDefinitions() {
           },
           updates: {
             type: "object",
-            description: "Key-value pairs of fields to update",
-            additionalProperties: true
+            description: "Allowed fields: short_description, description, comments, urgency, priority",
+            additionalProperties: false,
+            properties: {
+              short_description: { type: "string" },
+              description: { type: "string" },
+              comments: { type: "string" },
+              urgency: { type: ["string", "number"] },
+              priority: { type: ["string", "number"] }
+            }
           }
         },
         required: ["orderSysId", "updates"]
@@ -155,11 +174,15 @@ export function getMinimalToolDefinitions() {
   ];
 }
 
-export function registerTools(server: McpServer): void {
-  registerSearchCatalogItemsTool(server);
-  registerGetCatalogItemFormTool(server);
-  registerPlaceOrderTool(server);
-  registerValidateServiceNowConfigurationTool(server);
-  registerListUserOrdersTool(server);
-  registerUpdateOrderTool(server);
+export function registerTools(
+  server: McpServer,
+  client: ServiceNowClient,
+  tokenManager: TokenManager
+): void {
+  registerSearchCatalogItemsTool(server, client);
+  registerGetCatalogItemFormTool(server, client);
+  registerPlaceOrderTool(server, client);
+  registerValidateServiceNowConfigurationTool(server, tokenManager);
+  registerListUserOrdersTool(server, client);
+  registerUpdateOrderTool(server, client);
 }

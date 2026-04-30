@@ -9,11 +9,14 @@ A stateless [Model Context Protocol](https://modelcontextprotocol.io) server for
 | `search_catalog_items` | Full-text catalog search with Adaptive Card item picker |
 | `get_catalog_item_form` | Returns an Adaptive Card form for the selected item |
 | `place_order` | Submits the order and returns a confirmation Adaptive Card |
+| `list_user_orders` | Lists the caller's open (non-closed) catalog orders, enriched with their request items |
+| `update_order` | Updates a small allowlist of requestor-mutable fields on the caller's order (`short_description`, `description`, `comments`, `urgency`, `priority`) |
 | `validate_servicenow_configuration` | Validates OAuth and catalog API access end-to-end |
 
 **Related documentation:**
 
 - [Copilot Studio Setup](COPILOT_STUDIO_SETUP.md) -- add MCP tool and configure ordering topic
+- [Copilot Studio reference agents](copilot-studio/README.md) -- how this MCP server fits the ESS IT / ESS ServiceNow Catalog agent architecture
 - [ServiceNow Setup](docs/SERVICENOW_SETUP.md) -- OAuth app, integration user, and permissions
 - [Action Contracts](docs/MCS_ACTION_CONTRACTS.md) -- tool schemas for Copilot Studio topic authors
 - [Optional Container Deployment](docs/DEPLOY_CONTAINER_AZURE.md) -- run as one Docker container in Azure Container Apps
@@ -231,14 +234,67 @@ npm run smoke:test
 | `ENTRA_ALLOW_ANY_TENANT` | `false` | Accept any Microsoft tenant token |
 | `ENTRA_DCR_REGISTRATION_TOKEN` | _(unset)_ | Bearer token required on `POST /oauth/register` |
 | `ENTRA_DCR_ALLOW_UNAUTHENTICATED` | `false` | Allow open Dynamic Client Registration when no token is configured |
+| `ENTRA_ALLOWED_AUDIENCES` | _(empty)_ | Comma-separated extra `aud` values to accept (custom App ID URIs) |
 | `CORS_ALLOWED_ORIGINS` | _(empty)_ | Comma-separated browser origins for CORS-enabled endpoints |
 | `SERVICENOW_OAUTH_TOKEN_PATH` | `/oauth_token.do` | ServiceNow token endpoint path |
 | `SERVICENOW_OAUTH_GRANT_TYPE` | `auto` | Override grant type: `password` or `client_credentials` |
+| `SERVICENOW_OAUTH_CLIENT_AUTH_STYLE` | `auto` | OAuth client auth style: `request_body` or `basic` |
+| `SERVICENOW_REQUIRE_CALLER_ACCESS_TOKEN` | `false` | When `true`, refuse calls without `x-servicenow-access-token` (per-user ACL enforcement) |
 | `SERVICENOW_REQUESTED_FOR_LOOKUP_FIELDS` | `email,user_name` | `sys_user` fields for identity resolution |
 | `SERVICENOW_REQUESTED_FOR_CALLER_FIELDS` | `callerUpn` | Entra token claims to use as identity source |
 | `SERVICENOW_REQUESTED_FOR_FALLBACK_TO_CALLER_VALUE` | `true` | Fall back to UPN if no `sys_user` match |
 | `SERVICENOW_REQUESTED_FOR_DIAGNOSTICS` | `false` | Include requested_for diagnostics in tool/API responses |
 | `SERVICENOW_REQUESTED_FOR_DIAGNOSTICS_INCLUDE_PII` | `false` | Include raw caller identifiers in diagnostics (for short-lived troubleshooting only) |
+| `LOG_LEVEL` | `info` | Minimum log level emitted to stdout: `debug`, `info`, `warn`, or `error` |
+| `LOG_INCLUDE_CALLER_IDENTITY` | `false` | Attach caller `oid`/`upn` to every log entry. Off by default to keep PII out of App Insights |
+| `LOG_INCLUDE_ERROR_STACK` | `false` | Include error stack traces in error log entries |
+
+---
+
+## Local Testing Against ServiceNow
+
+Two ways to verify ServiceNow responses without going through Copilot Studio:
+
+### Option A — Run the full MCP server locally and call it via JSON-RPC
+
+```powershell
+# 1. Copy the sample settings file and fill in your ServiceNow credentials.
+Copy-Item local.settings.sample.json local.settings.json
+#    Set SERVICENOW_INSTANCE_URL / SERVICENOW_CLIENT_ID / SERVICENOW_CLIENT_SECRET
+#    (and SERVICENOW_USERNAME / SERVICENOW_PASSWORD for the password grant).
+#    ENTRA_AUTH_DISABLED=true is the default in the sample so no Bearer token is needed.
+
+# 2. Start the function locally on http://localhost:7071/mcp
+npm run start:dev
+
+# 3. In a second terminal, run the MCP smoke test against localhost.
+$env:MCP_ENDPOINT_URL = "http://localhost:7071/mcp"
+$env:SEARCH_QUERY = "laptop"
+npm run smoke:test
+```
+
+This exercises the full request pipeline (Express, MCP SDK, Streamable HTTP transport, `ServiceNowClient`).
+
+### Option B — Direct ServiceNow probe (no MCP, no Functions runtime)
+
+For faster iteration when you only care about ServiceNow responses, the
+`scripts/dev/test-servicenow-local.mjs` runner loads `local.settings.json`
+and calls the `ServiceNowClient` methods directly:
+
+```powershell
+npm run sn:local -- validate
+npm run sn:local -- search "vpn access" 5
+npm run sn:local -- form 04b7e94b4f7b4200086eeed18110c7fd
+npm run sn:local -- orders --upn=alice@contoso.com
+npm run sn:local -- order <itemSysId> '{"justification":"test"}' --confirm --upn=alice@contoso.com
+```
+
+Useful flags:
+- `--upn=<user@domain>` simulates the caller identity that the Express middleware would inject from a real Entra token. Required for `orders` and for testing `requested_for` resolution on `order`.
+- `--confirm` is mandatory on `order` because it creates a real ServiceNow request.
+- Existing `process.env` values win over `local.settings.json`, so you can override individual settings on the command line.
+
+Output is raw JSON — pipe through `ConvertFrom-Json` or `jq` to inspect specific fields.
 
 ---
 
