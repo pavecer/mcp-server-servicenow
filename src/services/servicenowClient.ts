@@ -666,3 +666,15 @@ export class ServiceNowClient {
     }
   }
 }
+
+/**
+ * Process-wide singleton.
+ *
+ * The ServiceNowClient owns no per-request state itself — caller identity
+ * and the optional caller ServiceNow access token are propagated through
+ * AsyncLocalStorage in src/requestContext.ts. Sharing one instance across
+ * tools and the catalog REST surface keeps a single TokenManager cache, so
+ * concurrent requests do not each negotiate their own ServiceNow token on
+ * cold start.
+ */
+export const serviceNowClient = new ServiceNowClient();

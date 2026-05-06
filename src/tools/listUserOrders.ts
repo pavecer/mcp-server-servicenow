@@ -1,8 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { ServiceNowClient } from "../services/servicenowClient";
-
-const client = new ServiceNowClient();
+import { serviceNowClient as client } from "../services/servicenowClient";
 
 export function registerListUserOrdersTool(server: McpServer): void {
   server.tool(

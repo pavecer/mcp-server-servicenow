@@ -1,11 +1,12 @@
 import { app, HttpRequest, HttpResponseInit, InvocationContext } from "@azure/functions";
 import express, { Request, Response } from "express";
 import serverlessHttp from "serverless-http";
-import { ServiceNowClient } from "../services/servicenowClient";
+import { serviceNowClient as catalogClient } from "../services/servicenowClient";
 import { buildCatalogItemSelectionAdaptiveCard, buildOrderFormAdaptiveCard, buildOrderConfirmationAdaptiveCard } from "../utils/adaptiveCards";
 import { entraAuthMiddleware } from "../utils/entraAuthMiddleware";
 import { runWithRequestContext } from "../requestContext";
 import { config } from "../config";
+import { buildCorsHeaders as buildSharedCorsHeaders } from "../utils/cors";
 
 /**
  * Catalog REST API — deterministic endpoints for Copilot Studio topic-driven flows.
@@ -32,27 +33,13 @@ import { config } from "../config";
  * Once registered, use InvokeConnectorAction in topics to call them.
  */
 
-const catalogClient = new ServiceNowClient();
+const catalogAllowedHeaders = "Content-Type, Authorization, x-functions-key, x-servicenow-access-token";
 
 function buildCorsHeaders(origin?: string | null): Record<string, string> {
-  const base: Record<string, string> = {
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization, x-functions-key, x-servicenow-access-token",
-    Vary: "Origin"
-  };
-
-  if (!origin) {
-    return base;
-  }
-
-  if (config.http.corsAllowedOrigins.includes(origin)) {
-    return {
-      ...base,
-      "Access-Control-Allow-Origin": origin
-    };
-  }
-
-  return base;
+  return buildSharedCorsHeaders(origin, {
+    methods: "GET, POST, OPTIONS",
+    allowedHeaders: catalogAllowedHeaders
+  });
 }
 
 // ---------------------------------------------------------------------------
