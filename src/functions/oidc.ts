@@ -2,6 +2,7 @@ import { app, HttpRequest, HttpResponseInit, InvocationContext } from "@azure/fu
 import axios from "axios";
 import crypto from "node:crypto";
 import { config } from "../config";
+import { buildCorsHeaders } from "../utils/cors";
 
 /**
  * OAuth 2.0 Dynamic Discovery endpoints that enable Copilot Studio's
@@ -48,26 +49,7 @@ const MS_METADATA_CACHE_TTL_MS = OIDC_CACHE_MAX_AGE_SECONDS * 1_000;
 
 // CORS headers included on every OIDC response so that browser-based clients
 // (including Microsoft Copilot Studio) can reach these endpoints cross-origin.
-function buildCorsHeaders(origin?: string | null): Record<string, string> {
-  const base: Record<string, string> = {
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization",
-    Vary: "Origin"
-  };
-
-  if (!origin) {
-    return base;
-  }
-
-  if (config.http.corsAllowedOrigins.includes(origin)) {
-    return {
-      ...base,
-      "Access-Control-Allow-Origin": origin
-    };
-  }
-
-  return base;
-}
+// Implemented via the shared helper in src/utils/cors.ts.
 
 // ---------------------------------------------------------------------------
 // Helpers
