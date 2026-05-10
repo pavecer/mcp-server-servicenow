@@ -335,7 +335,7 @@ app.http("oauth-protected-resource-options", {
 // /oauth/register  — RFC 7591 Dynamic Client Registration
 // ---------------------------------------------------------------------------
 
-async function oauthRegisterHandler(
+export async function oauthRegisterHandler(
   request: HttpRequest,
   _context: InvocationContext
 ): Promise<HttpResponseInit> {
