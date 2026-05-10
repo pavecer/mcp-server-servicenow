@@ -219,7 +219,8 @@ export function registerTools(
 // if they diverge — better to fail fast on cold start than to silently expose
 // an inconsistent tools/list response.
 (function assertToolManifestConsistency(): void {
-  const manifestNames = getMinimalToolDefinitions().map(tool => tool.name).sort();
+  const manifest = getMinimalToolDefinitions();
+  const manifestNames = manifest.map(tool => tool.name).sort();
   const expectedNames = [...TOOL_NAMES].sort();
   const same =
     manifestNames.length === expectedNames.length &&
@@ -233,4 +234,89 @@ export function registerTools(
         "Update both src/tools/index.ts TOOL_NAMES and getMinimalToolDefinitions()."
     );
   }
+
+  // Content parity: property names + required-field set must match between
+  // the hand-authored minimal manifest and the Zod schemas registered with
+  // the MCP SDK. Type-level details are intentionally NOT compared because
+  // the minimal manifest deliberately strips/simplifies JSON Schema
+  // keywords for Copilot Studio compatibility (see comment on
+  // getMinimalToolDefinitions() above). What MUST match exactly:
+  //   - the set of property names
+  //   - the set of required (i.e. non-optional) fields
+  //
+  // The expected shapes are derived by registering all tools against a stub
+  // McpServer with dummy dependencies. The register* functions only store
+  // closures at registration time; they do not invoke the dummies.
+  const expectedShapes = deriveExpectedToolShapesFromZod();
+
+  for (const toolDef of manifest) {
+    const expected = expectedShapes[toolDef.name];
+    if (!expected) {
+      // Unreachable given the name-set assertion above, but kept for clarity.
+      throw new Error(`MCP tool '${toolDef.name}' has no Zod-side registration to compare against.`);
+    }
+
+    const schema = toolDef.inputSchema as { properties?: Record<string, unknown>; required?: string[] };
+    const manifestProperties = new Set(Object.keys(schema.properties ?? {}));
+    const manifestRequired = new Set<string>(schema.required ?? []);
+
+    const propsMissingInManifest = [...expected.properties].filter(p => !manifestProperties.has(p));
+    const propsExtraInManifest = [...manifestProperties].filter(p => !expected.properties.has(p));
+    if (propsMissingInManifest.length > 0 || propsExtraInManifest.length > 0) {
+      throw new Error(
+        `MCP tool '${toolDef.name}' input property drift. ` +
+          `Missing in manifest: [${propsMissingInManifest.join(", ")}]. ` +
+          `Extra in manifest: [${propsExtraInManifest.join(", ")}]. ` +
+          "Update getMinimalToolDefinitions() to match the Zod schema."
+      );
+    }
+
+    const requiredMissingInManifest = [...expected.required].filter(p => !manifestRequired.has(p));
+    const requiredExtraInManifest = [...manifestRequired].filter(p => !expected.required.has(p));
+    if (requiredMissingInManifest.length > 0 || requiredExtraInManifest.length > 0) {
+      throw new Error(
+        `MCP tool '${toolDef.name}' required-field drift. ` +
+          `Missing in manifest: [${requiredMissingInManifest.join(", ")}]. ` +
+          `Extra in manifest: [${requiredExtraInManifest.join(", ")}]. ` +
+          "Update getMinimalToolDefinitions() (or the Zod schema) so required[] matches."
+      );
+    }
+  }
 })();
+
+function deriveExpectedToolShapesFromZod(): Record<string, { properties: Set<string>; required: Set<string> }> {
+  // Tool register* functions only store closures; the dummy client and token
+  // manager are never invoked at registration time. Keep this stub-driven
+  // registration isolated so it never reaches a real McpServer instance.
+  const stubServer = new McpServer({ name: "drift-check", version: "0.0.0" });
+  const dummyClient = {} as ServiceNowClient;
+  const dummyTokenManager = {} as TokenManager;
+  registerTools(stubServer, dummyClient, dummyTokenManager);
+
+  // McpServer keeps registrations on a private `_registeredTools` map keyed
+  // by tool name. Accessed via bracket cast so the production code does not
+  // depend on @modelcontextprotocol/sdk internals at type level.
+  const registeredTools = (stubServer as unknown as {
+    _registeredTools: Record<string, { inputSchema?: { shape?: Record<string, unknown> } }>;
+  })._registeredTools;
+
+  const result: Record<string, { properties: Set<string>; required: Set<string> }> = {};
+  for (const [name, tool] of Object.entries(registeredTools)) {
+    const shape = tool.inputSchema?.shape ?? {};
+    const properties = new Set<string>(Object.keys(shape));
+    const required = new Set<string>();
+    for (const [field, zodSchema] of Object.entries(shape)) {
+      // Zod 4: ZodType.isOptional() returns true for ZodOptional / ZodDefault /
+      // wrapped optional unions — anything that does not require the caller to
+      // supply the field. Anything else is required.
+      const isOptional =
+        typeof (zodSchema as { isOptional?: () => boolean }).isOptional === "function" &&
+        (zodSchema as { isOptional: () => boolean }).isOptional();
+      if (!isOptional) {
+        required.add(field);
+      }
+    }
+    result[name] = { properties, required };
+  }
+  return result;
+}
