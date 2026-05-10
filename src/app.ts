@@ -9,6 +9,8 @@ import { entraAuthMiddleware } from "./utils/entraAuthMiddleware";
 import { sharedServiceNowClient, sharedTokenManager } from "./services/instances";
 import Logger from "./utils/logger";
 
+const MCP_PATH = "/mcp";
+
 /**
  * Creates and returns the Express application that hosts the MCP server.
  *
@@ -138,6 +140,14 @@ export function createMcpExpressApp(): express.Express {
   });
 
   expressApp.use((req: Request, res: Response, next) => {
+    // Reject anything that isn't the MCP endpoint up-front so /health (and any
+    // unrelated path served by Express in standalone mode) reach their dedicated
+    // handlers instead of returning a misleading SSE 200 below.
+    if (req.path !== MCP_PATH) {
+      next();
+      return;
+    }
+
     setMcpHttpHeaders(req, res);
 
     if (req.method === "OPTIONS") {
@@ -162,7 +172,7 @@ export function createMcpExpressApp(): express.Express {
   // Serve MCP over Streamable HTTP transport (stateless mode)
   // Use app.use as Express 5-compatible route handler.
   expressApp.use(async (req: Request, res: Response): Promise<void> => {
-    if (req.path !== "/mcp") {
+    if (req.path !== MCP_PATH) {
       res.status(404).json({ error: "not_found" });
       return;
     }

@@ -8,6 +8,33 @@ import { registerValidateServiceNowConfigurationTool } from "./validateServiceNo
 import { registerListUserOrdersTool } from "./listUserOrders";
 import { registerUpdateOrderTool } from "./updateOrder";
 
+/**
+ * Single source of truth for the names of MCP tools this server exposes.
+ *
+ * Two surfaces consume this list:
+ *
+ *  - `registerTools(server)` registers a Zod-typed handler for each tool with
+ *    the MCP SDK. The SDK normally returns a rich JSON-Schema for each tool
+ *    via tools/list, but Copilot Studio is currently sensitive to extra MCP
+ *    SDK fields (execution metadata, richer JSON Schema keywords, ...).
+ *  - `getMinimalToolDefinitions()` returns a hand-authored, minimal manifest
+ *    that app.ts uses to override the SDK's tools/list response.
+ *
+ * Keeping the two in sync was previously implicit. The startup assertion at
+ * the bottom of this file now fails fast if a tool is added to one surface
+ * without the other.
+ */
+const TOOL_NAMES = [
+  "search_catalog_items",
+  "get_catalog_item_form",
+  "place_order",
+  "validate_servicenow_configuration",
+  "list_user_orders",
+  "update_order"
+] as const;
+
+export type RegisteredToolName = (typeof TOOL_NAMES)[number];
+
 export function getMinimalToolDefinitions() {
   // NOTE: This minimal manifest is hand-maintained and intentionally returned
   // by the MCP tools/list handler instead of the SDK-derived schema. Copilot
@@ -186,3 +213,24 @@ export function registerTools(
   registerListUserOrdersTool(server, client);
   registerUpdateOrderTool(server, client);
 }
+
+// Module-load drift guard: the minimal manifest exposed to Copilot Studio and
+// the canonical TOOL_NAMES list must stay in sync. Throw early at import time
+// if they diverge — better to fail fast on cold start than to silently expose
+// an inconsistent tools/list response.
+(function assertToolManifestConsistency(): void {
+  const manifestNames = getMinimalToolDefinitions().map(tool => tool.name).sort();
+  const expectedNames = [...TOOL_NAMES].sort();
+  const same =
+    manifestNames.length === expectedNames.length &&
+    manifestNames.every((name, index) => name === expectedNames[index]);
+
+  if (!same) {
+    throw new Error(
+      "MCP tool manifest drift detected. " +
+        `Expected tools: [${expectedNames.join(", ")}]. ` +
+        `Manifest tools: [${manifestNames.join(", ")}]. ` +
+        "Update both src/tools/index.ts TOOL_NAMES and getMinimalToolDefinitions()."
+    );
+  }
+})();

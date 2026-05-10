@@ -23,6 +23,10 @@ type GrantType = "auto" | "password" | "client_credentials";
 
 export class TokenManager {
   private cachedToken?: CachedToken;
+  // Single-flight guard: when a token request is already in flight, parallel
+  // callers await the same promise instead of stampeding the OAuth endpoint
+  // (which both wastes throughput and risks per-IP throttling on cold start).
+  private inFlight?: Promise<string>;
 
   private formatTokenRequestError(error: unknown): string {
     if (!axios.isAxiosError(error)) {
@@ -61,6 +65,18 @@ export class TokenManager {
       return this.cachedToken.value;
     }
 
+    // Coalesce concurrent acquisitions into a single in-flight request.
+    if (this.inFlight) {
+      return this.inFlight;
+    }
+
+    this.inFlight = this.acquireToken().finally(() => {
+      this.inFlight = undefined;
+    });
+    return this.inFlight;
+  }
+
+  private async acquireToken(): Promise<string> {
     const tokenUrl = new URL(config.serviceNow.tokenPath, config.serviceNow.instanceUrl).toString();
     const configuredGrant = (config.serviceNow.grantType || "auto") as GrantType;
     const hasCredentials = !!(config.serviceNow.username && config.serviceNow.password);
