@@ -46,6 +46,7 @@ param entraAudience string = ''
 param entraTrustedTenantIds string = ''
 
 @description('Allow tokens from any Entra tenant (true/false). Keep false for production unless explicitly required.')
+@allowed([ 'true', 'false' ])
 param entraAllowAnyTenant string = 'false'
 
 @description('Disable Entra Bearer validation entirely (true/false). MUST be "false" in production.')
