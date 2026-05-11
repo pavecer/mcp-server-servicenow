@@ -170,6 +170,29 @@ See [COPILOT_STUDIO_SETUP.md](COPILOT_STUDIO_SETUP.md) for the full guide.
 - **Secrets**: All secrets in Azure Key Vault; Function App reads via managed identity
 - **Monitoring**: Application Insights
 
+### HTTP surfaces and authentication
+
+The deployed Function App exposes the routes below. Auth requirements are
+fixed in code; no extra Function-level keys, network ACLs, or RBAC are
+applied beyond what's documented here.
+
+| Method · Route | Purpose | Auth |
+|---|---|---|
+| `POST /mcp` | MCP Streamable HTTP — `tools/list`, `tools/call` | **Entra Bearer required** (validated by [src/utils/entraAuthMiddleware.ts](src/utils/entraAuthMiddleware.ts)) |
+| `GET /mcp` | SSE readiness probe (Streamable HTTP transport) | Anonymous |
+| `DELETE /mcp` | Session cleanup (stateless mode no-op) | Anonymous |
+| `OPTIONS /mcp` | CORS preflight | Anonymous |
+| `POST /api/catalog/search` · `GET /api/catalog/form/:sysId` · `POST /api/catalog/order` | Deterministic REST surface for Copilot Studio topics | **Entra Bearer required** |
+| `OPTIONS /api/catalog/*` | CORS preflight | Anonymous |
+| `GET /health` | Liveness/readiness probe — returns `{"status":"ok","server":"servicenow-mcp"}` | Anonymous |
+| `GET /.well-known/openid-configuration` · `oauth-authorization-server` · `oauth-protected-resource` | OIDC discovery and RFC 8414/9728 metadata | Anonymous |
+| `POST /oauth/register` | RFC 7591 Dynamic Client Registration | Gated — see below |
+| `GET /oauth/register` | Lightweight capability doc for clients that probe before POST | Anonymous |
+
+`POST /oauth/register` is **closed by default**: when no `ENTRA_DCR_REGISTRATION_TOKEN` is set and `ENTRA_DCR_ALLOW_UNAUTHENTICATED` is not `"true"`, the endpoint returns **403**. With a registration token configured the request must include `Authorization: Bearer <token>` (constant-time comparison); set `ENTRA_DCR_ALLOW_UNAUTHENTICATED=true` to opt in to anonymous DCR.
+
+When `ENTRA_AUTH_DISABLED=true` (intended for local dev only), Bearer validation is bypassed on `POST /mcp` and `/api/catalog/*`. The startup log emits a `WARN` line stating the effective tenant policy at every cold start so this is visible in App Insights.
+
 ### Delegated Identity Flow
 
 Each order is correctly attributed to the Copilot Studio user who placed it:
@@ -299,6 +322,15 @@ Output is raw JSON — pipe through `ConvertFrom-Json` or `jq` to inspect specif
 ---
 
 ## Smoke Testing Deployed Endpoint
+
+Quick liveness check (no token required):
+
+```bash
+curl https://<function-app>.azurewebsites.net/health
+# → {"status":"ok","server":"servicenow-mcp"}
+```
+
+Full MCP smoke test (Entra Bearer required):
 
 ```bash
 set MCP_ENDPOINT_URL=https://<function-app>.azurewebsites.net/mcp
