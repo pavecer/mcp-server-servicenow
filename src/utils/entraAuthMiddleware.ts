@@ -96,3 +96,46 @@ export function entraAuthMiddleware(req: Request, res: Response, next: NextFunct
       });
     });
 }
+
+// Module-load startup log: emit a single, loud line stating the effective Entra
+// tenant policy so an operator can immediately see in cold-start logs whether
+// the deployed Function App is configured for single-tenant, trusted-multi-
+// tenant, or open-multi-tenant mode. Particularly important when
+// ENTRA_ALLOW_ANY_TENANT=true because that flag accepts tokens from any
+// Microsoft tenant and is easy to leave on by accident.
+(function logEffectiveTenantPolicy(): void {
+  const entra = config.entraAuth;
+
+  if (entra.disabled) {
+    Logger.warn("Entra auth DISABLED via ENTRA_AUTH_DISABLED=true. All requests bypass Bearer validation. Never use in production.", {
+      operation: "entra_auth_policy",
+      mode: "disabled"
+    });
+    return;
+  }
+
+  if (entra.allowAnyTenant) {
+    Logger.warn("Entra auth: ENTRA_ALLOW_ANY_TENANT=true \u2014 tokens from ANY Microsoft tenant will be accepted. Verify audience validation and per-call authorization before exposing data. Set ENTRA_TRUSTED_TENANT_IDS instead for the bounded multi-tenant case.", {
+      operation: "entra_auth_policy",
+      mode: "allow_any_tenant",
+      trustedTenantCount: entra.trustedTenantIds.length
+    });
+    return;
+  }
+
+  if (entra.trustedTenantIds.length > 0) {
+    Logger.info("Entra auth: trusted-multi-tenant mode", {
+      operation: "entra_auth_policy",
+      mode: "trusted_multi_tenant",
+      trustedTenantCount: entra.trustedTenantIds.length
+    });
+    return;
+  }
+
+  Logger.info("Entra auth: single-tenant mode", {
+    operation: "entra_auth_policy",
+    mode: "single_tenant",
+    hasTenantId: Boolean(entra.tenantId),
+    hasClientId: Boolean(entra.clientId)
+  });
+})();
