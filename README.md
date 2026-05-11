@@ -34,6 +34,7 @@ A stateless [Model Context Protocol](https://modelcontextprotocol.io) server for
 | Node.js 20+ | To build the project locally |
 | ServiceNow instance | Admin access to create OAuth apps and users |
 | Microsoft Entra ID | Permission to register an app |
+| Copilot Studio agent model | **GPT-5 or newer**, or **Claude Sonnet**. **GPT-4.1 is not supported** because it does not render the MCP Adaptive Cards. See [COPILOT_STUDIO_SETUP.md](COPILOT_STUDIO_SETUP.md#supported-orchestrator-models). |
 
 ---
 

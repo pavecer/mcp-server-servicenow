@@ -64,4 +64,5 @@ No client-side card construction is needed.
 | Form card is empty | Catalog item has no variables | Normal for items with no required fields |
 | Order fails with 403 | ServiceNow user lacks `itil` role | Add `itil` role (see docs/SERVICENOW_SETUP.md) |
 | Tool returns 401 | Entra token invalid or expired | Check COPILOT_STUDIO_SETUP.md troubleshooting |
+| Adaptive Card not rendering, plain text shown instead | Agent is using **GPT-4.1** (or older GPT-4 variant) which does not render MCP Adaptive Cards | Switch the Copilot Studio agent model to **GPT-5+** or **Claude Sonnet** (Settings > Generative AI > Model). See [COPILOT_STUDIO_SETUP.md](../COPILOT_STUDIO_SETUP.md#supported-orchestrator-models). |
 | Adaptive Card not rendering | Copilot Studio channel does not support cards | Verify the channel supports Adaptive Cards v1.5 |
