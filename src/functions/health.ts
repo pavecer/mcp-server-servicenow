@@ -1,4 +1,5 @@
 import { app, HttpResponseInit } from "@azure/functions";
+import { withFunctionContext } from "./wrap";
 
 /**
  * Health / readiness probe for the Azure Functions deployment.
@@ -14,9 +15,9 @@ app.http("health", {
   methods: ["GET"],
   authLevel: "anonymous",
   route: "health",
-  handler: async (): Promise<HttpResponseInit> => ({
+  handler: withFunctionContext(async (): Promise<HttpResponseInit> => ({
     status: 200,
     headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
     body: JSON.stringify({ status: "ok", server: "servicenow-mcp" })
-  })
+  }))
 });

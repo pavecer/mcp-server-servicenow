@@ -1,6 +1,7 @@
 import { app, HttpRequest } from "@azure/functions";
 import serverlessHttp from "serverless-http";
 import { createMcpExpressApp } from "../app";
+import { withFunctionContext } from "./wrap";
 
 /**
  * Azure Functions v4 HTTP trigger that hosts the ServiceNow MCP server.
@@ -45,8 +46,9 @@ app.http("servicenow-mcp", {
   authLevel: "anonymous",
   route: "mcp",
   // Azure Functions v4 passes (request, context), while serverless-http Azure provider expects (context, req).
-  handler: async (request, context) => {
+  // withFunctionContext binds the per-invocation logging sink so Logger.* lands in App Insights `traces`.
+  handler: withFunctionContext(async (request, context) => {
     const mutableReq = await toMutableAzureRequest(request);
     return handler(context, mutableReq);
-  }
+  })
 });

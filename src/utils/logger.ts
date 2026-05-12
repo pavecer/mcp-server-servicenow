@@ -2,6 +2,27 @@ import { getRequestContext } from "../requestContext";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
+/**
+ * Minimal logging surface that the Logger can dispatch to instead of console.*.
+ * Structurally compatible with Azure Functions v4 `InvocationContext` so a
+ * Function handler wrapper can pass the InvocationContext directly through the
+ * RequestContext as a sink.
+ *
+ * Why this matters: the Functions Node v4 worker only forwards context.log/
+ * info/warn/error/debug/trace to Application Insights `traces`. Plain
+ * `console.*` lands only in WebJobs storage, which is not queryable from
+ * App Insights. Routing structured log entries through the sink restores
+ * end-to-end observability.
+ */
+export interface LogSink {
+  trace?(...args: unknown[]): void;
+  debug?(...args: unknown[]): void;
+  info(...args: unknown[]): void;
+  warn(...args: unknown[]): void;
+  error(...args: unknown[]): void;
+  log?(...args: unknown[]): void;
+}
+
 interface LogEntry {
   timestamp: string;
   level: LogLevel;
@@ -153,6 +174,42 @@ export class Logger {
     }
 
     const formatted = Logger.formatLog(entry);
+    Logger.dispatch(level, formatted);
+  }
+
+  /**
+   * Routes a formatted log line to the per-request `LogSink` when one is
+   * present in the current AsyncLocalStorage context, falling back to
+   * `console.*` for the standalone server, unit tests, and any code path that
+   * runs outside an Azure Functions invocation (e.g. module-load IIFEs).
+   *
+   * Public so tests can deterministically assert which sink was chosen
+   * without re-creating the full Logger.log pipeline.
+   */
+  static dispatch(level: LogLevel, formatted: string): void {
+    const sink = getRequestContext()?.logSink;
+
+    if (sink) {
+      switch (level) {
+        case "error":
+          sink.error(formatted);
+          return;
+        case "warn":
+          sink.warn(formatted);
+          return;
+        case "debug":
+          if (typeof sink.debug === "function") {
+            sink.debug(formatted);
+          } else {
+            sink.info(formatted);
+          }
+          return;
+        default:
+          sink.info(formatted);
+          return;
+      }
+    }
+
     if (level === "error") {
       console.error(formatted);
     } else if (level === "warn") {

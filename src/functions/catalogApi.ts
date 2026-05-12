@@ -7,6 +7,7 @@ import { entraAuthMiddleware } from "../utils/entraAuthMiddleware";
 import { runWithRequestContext } from "../requestContext";
 import { config } from "../config";
 import { buildCorsHeaders as buildSharedCorsHeaders } from "../utils/cors";
+import { withFunctionContext } from "./wrap";
 
 /**
  * Catalog REST API — deterministic endpoints for Copilot Studio topic-driven flows.
@@ -261,7 +262,7 @@ app.http("catalog-search", {
   methods: ["POST"],
   authLevel: "anonymous",
   route: "api/catalog/search",
-  handler: catalogFunctionHandler
+  handler: withFunctionContext(catalogFunctionHandler)
 });
 
 // GET /api/catalog/form/{sysId}
@@ -269,7 +270,7 @@ app.http("catalog-form", {
   methods: ["GET"],
   authLevel: "anonymous",
   route: "api/catalog/form/{sysId}",
-  handler: catalogFunctionHandler
+  handler: withFunctionContext(catalogFunctionHandler)
 });
 
 // POST /api/catalog/order
@@ -277,7 +278,7 @@ app.http("catalog-order", {
   methods: ["POST"],
   authLevel: "anonymous",
   route: "api/catalog/order",
-  handler: catalogFunctionHandler
+  handler: withFunctionContext(catalogFunctionHandler)
 });
 
 // CORS preflight for all catalog routes
@@ -285,8 +286,8 @@ app.http("catalog-options", {
   methods: ["OPTIONS"],
   authLevel: "anonymous",
   route: "api/catalog/{*rest}",
-  handler: async (request): Promise<HttpResponseInit> => {
+  handler: withFunctionContext(async (request): Promise<HttpResponseInit> => {
     const origin = request.headers.get("origin");
     return { status: 204, headers: buildCorsHeaders(origin) };
-  }
+  })
 });
