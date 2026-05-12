@@ -3,6 +3,7 @@ import axios from "axios";
 import crypto from "node:crypto";
 import { config } from "../config";
 import { buildCorsHeaders } from "../utils/cors";
+import { withFunctionContext } from "./wrap";
 
 /**
  * OAuth 2.0 Dynamic Discovery endpoints that enable Copilot Studio's
@@ -234,7 +235,7 @@ app.http("oidc-discovery", {
   methods: ["GET"],
   authLevel: "anonymous",
   route: ".well-known/openid-configuration",
-  handler: oidcDiscoveryHandler
+  handler: withFunctionContext(oidcDiscoveryHandler)
 });
 
 // CORS preflight for the OIDC discovery endpoint.
@@ -242,10 +243,10 @@ app.http("oidc-discovery-options", {
   methods: ["OPTIONS"],
   authLevel: "anonymous",
   route: ".well-known/openid-configuration",
-  handler: async (request): Promise<HttpResponseInit> => ({
+  handler: withFunctionContext(async (request): Promise<HttpResponseInit> => ({
     status: 204,
     headers: buildCorsHeaders(request.headers.get("origin"))
-  })
+  }))
 });
 
 // ---------------------------------------------------------------------------
@@ -257,17 +258,17 @@ app.http("oauth-authorization-server", {
   methods: ["GET"],
   authLevel: "anonymous",
   route: ".well-known/oauth-authorization-server",
-  handler: oidcDiscoveryHandler
+  handler: withFunctionContext(oidcDiscoveryHandler)
 });
 
 app.http("oauth-authorization-server-options", {
   methods: ["OPTIONS"],
   authLevel: "anonymous",
   route: ".well-known/oauth-authorization-server",
-  handler: async (request): Promise<HttpResponseInit> => ({
+  handler: withFunctionContext(async (request): Promise<HttpResponseInit> => ({
     status: 204,
     headers: buildCorsHeaders(request.headers.get("origin"))
-  })
+  }))
 });
 
 // ---------------------------------------------------------------------------
@@ -318,17 +319,17 @@ app.http("oauth-protected-resource", {
   methods: ["GET"],
   authLevel: "anonymous",
   route: ".well-known/oauth-protected-resource",
-  handler: oauthProtectedResourceHandler
+  handler: withFunctionContext(oauthProtectedResourceHandler)
 });
 
 app.http("oauth-protected-resource-options", {
   methods: ["OPTIONS"],
   authLevel: "anonymous",
   route: ".well-known/oauth-protected-resource",
-  handler: async (request): Promise<HttpResponseInit> => ({
+  handler: withFunctionContext(async (request): Promise<HttpResponseInit> => ({
     status: 204,
     headers: buildCorsHeaders(request.headers.get("origin"))
-  })
+  }))
 });
 
 // ---------------------------------------------------------------------------
@@ -427,7 +428,7 @@ app.http("oauth-register", {
   methods: ["POST"],
   authLevel: "anonymous",
   route: "oauth/register",
-  handler: oauthRegisterHandler
+  handler: withFunctionContext(oauthRegisterHandler)
 });
 
 // Some OAuth clients probe the DCR endpoint with GET before issuing POST.
@@ -436,14 +437,14 @@ app.http("oauth-register-get", {
   methods: ["GET"],
   authLevel: "anonymous",
   route: "oauth/register",
-  handler: async (request): Promise<HttpResponseInit> => ({
+  handler: withFunctionContext(async (request): Promise<HttpResponseInit> => ({
     status: 200,
     headers: { "Content-Type": "application/json", ...buildCorsHeaders(request.headers.get("origin")) },
     body: JSON.stringify({
       registration_endpoint: "/oauth/register",
       registration_policy: "post-required"
     })
-  })
+  }))
 });
 
 // CORS preflight for the DCR endpoint.
@@ -451,8 +452,8 @@ app.http("oauth-register-options", {
   methods: ["OPTIONS"],
   authLevel: "anonymous",
   route: "oauth/register",
-  handler: async (request): Promise<HttpResponseInit> => ({
+  handler: withFunctionContext(async (request): Promise<HttpResponseInit> => ({
     status: 204,
     headers: buildCorsHeaders(request.headers.get("origin"))
-  })
+  }))
 });
