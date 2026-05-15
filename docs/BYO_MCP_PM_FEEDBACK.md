@@ -33,6 +33,7 @@ ranked by severity, with concrete reproductions where possible.
 | 8 | Registration creates **two PP connectors per server** (`ext_<name>` and `ext_<name>P` with a "P" suffix) — undocumented. The P-variant blocks name reuse just as much as the regular one. | Medium |
 | 9 | No public API or admin-center action to delete a stale request entry from "Tools > Requests". | Medium |
 | 10 | Popup-based consent windows in admin center auto-close, **destroying the HAR** before the developer can save it. Makes self-diagnosis nearly impossible. | Medium |
+| 11 | Approved BYO MCP server appears in the **`discoverMCPServers`** tenant catalog and in `a365 develop list-available`, but **never appears in the Copilot Studio MCP picker** ("Add a tool → Model Context Protocol" tab). **Root cause confirmed:** the PP connectors created by the registration flow have `properties.capabilities = []` instead of `["actions"]`. Copilot Studio's picker filters by `capabilities has 'actions'`, silently excluding the server. **Workaround validated end-to-end** — PATCH the canonical connector in the system env to set `capabilities = ["actions"]`; tenant-scoped replicas (`shared_tc-ext-*`) propagate the fix to user envs within ~1 hour. | **Blocker** |
 
 ---
 
@@ -418,6 +419,181 @@ Track status: a365 develop-mcp status ext_X
 ```
 
 …and the admin can click Approve / Reject knowing Reject will fully clean up.
+
+---
+
+## 11. Approved BYO MCP never appears in Copilot Studio MCP picker
+
+### What happened
+
+After completing the full registration + admin approval flow successfully:
+
+- ✅ All 4 Entra apps exist with correct `requiredResourceAccess` chain.
+- ✅ Both Power Platform connectors (`ext_SnowCat`, `ext_SnowCatP`) created in
+  the `Microsoft 365 Compliant Container` system env (`242b55fb-...`).
+- ✅ Tenant-wide admin consent granted for `PlatformRuntime.Internal.All`
+  (BYO → Agent 365 SP) and `access_as_user` (RemoteProxy → backend).
+- ✅ M365 admin center shows the request as **Available** / approved.
+- ✅ The Agent 365 catalog endpoint **`https://agent365.svc.cloud.microsoft/agents/v2/discoverMCPServers`**
+  returns `ext_SnowCat` alongside the Microsoft built-in MCPs:
+
+  ```json
+  {
+    "mcpServerName": "ext_SnowCat",
+    "id": "2a88ff46-6550-f111-bec7-000d3ab80bec",
+    "url": "https://agent365.svc.cloud.microsoft/agents/servers/ext_SnowCat",
+    "scope": "Tools.ListInvoke.All",
+    "audience": "b06a3be0-5355-42b8-8cea-baa56db0edb7",
+    "publisher": "<tenant-guid>"
+  }
+  ```
+
+- ✅ `a365 develop list-available` lists `ext_SnowCat` correctly.
+
+Despite all of the above, **the server never appears in the Copilot Studio
+MCP picker** (`copilotstudio.microsoft.com` → agent → Tools → Add tool → MCP
+servers tab). Verified across:
+
+- Multiple browser sessions (regular + incognito)
+- Multiple Power Platform environments (Default, Microsoft 365, others)
+- Hard refresh (Ctrl+F5)
+- Sign-out / sign-in cycles
+- **5+ hours of waiting after approval**
+
+The Microsoft built-in MCPs (`mcp_M365Copilot`, `mcp_TeamsServer`, etc.) DO
+show up in the picker. Only the BYO `ext_SnowCat` is missing.
+
+### Why this matters
+
+This is the **end-to-end blocker** for any BYO MCP scenario. Every preceding
+issue (#1–#10) can be worked around with developer toil, but if the result is
+invisible in the consumer surface (Copilot Studio), the whole feature is
+effectively unusable for its primary purpose.
+
+### Root cause (confirmed via API forensics + end-to-end test)
+
+**Status:** Workaround validated. After applying the PATCH below to the
+canonical connector, the BYO MCP server **did become visible** in the Copilot
+Studio "Add a tool → Model Context Protocol" picker in a user-facing env
+("Contoso Personal Productivity" / Default env). Propagation delay from the
+PATCH to picker visibility was on the order of **tens of minutes** (not
+immediate, not requiring a full picker refresh of the canonical metadata; the
+fix flows through the same tenant-connector replication pipeline that originally
+produced the broken `tc-ext-*` copies).
+
+Brute-force comparison of the two PP connectors created by the BYO registration
+(`shared_ext-<name>-...` and `shared_ext-<name>p-...`) against the working
+Microsoft built-in MCP connectors (`shared_a365copilotchatmcp`,
+`shared_a365adminmcp`, `shared_a365outlookmailmcp`, etc.) revealed:
+
+| Field | Working built-in MCPs | BYO `ext_<name>` connector |
+|---|---|---|
+| `properties.metadata.source` | `marketplace` | `powerapps-user-defined` |
+| `properties.capabilities` | `["actions"]` | **`[]` (empty!)** |
+| `properties.publisher` | `Microsoft` | `MOD Administrator` (creator) |
+| `properties.tier` | `Premium` | `Standard` |
+| `properties.runtimeUrls` host | `*.common.europe002.azure-apihub.net` | `*.custom.europe002.azure-apihub.net` |
+| `properties.iconUri` | branded `static.powerapps.com/...` | default `defaulticons.powerapps.com/...` |
+
+The **decisive filter** is `properties.capabilities has 'actions'` on the
+`https://api.powerapps.com/providers/Microsoft.PowerApps/apis` endpoint — every
+single one of the 1100+ visible custom-connector picker entries in this env has
+that capability. The two BYO connectors created by the Agent 365 registration
+flow do **not** declare it. The Copilot Studio MCP picker (which is built on top
+of the same connector list) consequently filters them out before ever showing
+the user.
+
+**Workaround that fixes visibility immediately:**
+
+```powershell
+$envId    = "<compliant-container-env-id>"
+$ppToken  = az account get-access-token --resource "https://service.powerapps.com/" --query accessToken -o tsv
+$headers  = @{ Authorization = "Bearer $ppToken"; "Content-Type" = "application/json" }
+$body     = @{ properties = @{ capabilities = @("actions") } } | ConvertTo-Json
+foreach ($cn in @(
+  "shared_ext-5f<name>-5f<envSuffix>",
+  "shared_ext-5f<name>p-5f<envSuffix>"
+)) {
+  $url = "https://api.powerapps.com/providers/Microsoft.PowerApps/apis/$cn" + `
+         "?%24filter=environment%20eq%20%27$envId%27&api-version=2016-11-01"
+  Invoke-RestMethod -Method Patch -Uri $url -Headers $headers -Body $body
+}
+```
+
+After the PATCH the connector appears in the standard `capabilities has 'actions'`
+listing — confirmed via:
+
+```http
+GET https://api.powerapps.com/providers/Microsoft.PowerApps/apis
+    ?api-version=2016-11-01
+    &$filter=environment eq '<env-id>' and properties/capabilities has 'actions'
+```
+
+`metadata.source` is **read-only** for custom connectors (PATCH returns
+`CannotUpdateApiMetadata`), so we cannot fake the connectors as `marketplace`.
+That field is informational only — the real picker filter is `capabilities`.
+This is **confirmed**: after the PATCH the connector remains
+`metadata.source: powerapps-user-defined` and `publisher: MOD Administrator`
+yet is now picker-visible.
+
+**Replication caveat:** the registration creates the canonical connector in the
+hidden `Microsoft 365 Compliant Container` system env (`242b55fb-...`, *not*
+listed by `a365 develop-mcp list-environments` and *not* in the BAP admin env
+list) and then propagates two `shared_tc-ext-<name>-...` tenant-scoped replicas
+into a curated subset of envs (in this tenant: 7 of 14 envs got the
+replicas — PVE Sandbox/Dev envs were excluded). The replicas are *not* custom
+APIs (`isCustomApi: false`, `metadata.source: tenant-scoped`) and reject the
+standard custom-connector PATCH with `CustomApiNotFound`. Patching the
+canonical is the only path; the platform's replication eventually copies
+`capabilities` to all the `tc-ext-*` replicas.
+
+### Suggested fix
+
+1. **Make Agent 365 registration set `capabilities: ["actions"]` on the
+   connectors it creates.** This is the single highest-impact fix in this
+   document — it turns the BYO feature from "fully invisible to end users"
+   into "actually works end-to-end".
+2. **Document the propagation pipeline** explicitly: `discoverMCPServers` →
+   PP connector listing → Copilot Studio picker. State the expected SLA
+   (minutes? hours? daily batch?).
+3. **Surface a status indicator** in M365 admin center: "Visible in Copilot
+   Studio: Yes/No". The check can be a simple PP API call.
+4. **Provide a CLI command** `a365 develop check-visibility --server ext_X`
+   that reports whether the server is visible in each consumer surface
+   (Copilot Studio, VS Code, Claude, GitHub CLI) and explains why if not.
+   The check for Copilot Studio is essentially: does the connector have
+   `capabilities` containing `actions` in the user's working environment?
+
+### Reproduction (verified May 2026)
+
+1. Complete the full BYO registration + admin approval flow (issues #1–#10
+   notwithstanding).
+2. Run `a365 develop list-available` — confirm `ext_<name>` appears in the
+   `discoverMCPServers` catalog.
+3. Inspect the canonical PP connector:
+   ```http
+   GET https://api.powerapps.com/providers/Microsoft.PowerApps/apis
+       ?api-version=2016-11-01
+       &$filter=environment eq '<compliant-container-env-id>'
+   ```
+   Filter for `name = shared_ext-5f<name>-...`. Observe
+   `properties.capabilities: []` and `properties.metadata.source:
+   powerapps-user-defined`.
+4. Inspect the `tc-ext-*` replicas in any user-facing env (e.g. the Default
+   env / personal productivity). Observe they also have
+   `properties.capabilities: []` and `properties.metadata.source:
+   tenant-scoped`. Direct PATCH on these returns
+   `400 CustomApiNotFound`.
+5. Open `https://copilotstudio.microsoft.com`, switch to a user-facing env
+   that has the replicas, create / open an agent, go to **Tools → Add a
+   tool → Model Context Protocol** tab, search `ext_<name>`. **Result:
+   not found.**
+6. Apply the PATCH workaround above to **both** canonical connectors
+   (`shared_ext-<name>-...` and `shared_ext-<name>p-...`) in the
+   Compliant Container env.
+7. Wait for tenant-connector replication (observed: tens of minutes).
+8. Refresh Copilot Studio MCP picker. **Result: `ext_<name>` appears under
+   the Model Context Protocol tab and can be added to the agent.**
 
 ---
 
