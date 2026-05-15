@@ -1,0 +1,426 @@
+# Agent 365 BYO MCP — Field Feedback for PM
+
+**Audience:** Product team owning the Agent 365 BYO (Bring-Your-Own) MCP registration
+flow, the `a365` CLI, and the M365 admin center "Tools > Requests" surface.
+
+**Context:** Real-world end-to-end registration of a custom remote MCP server
+(this repo: a ServiceNow Service Catalog MCP backed by Azure Functions, EntraOAuth
+authenticated). What "should" be a 1–2 minute flow turned into 5+ failed
+registration attempts spanning ~2 hours due to undocumented constraints, silent
+warnings, and lack of automated cleanup. Below is a consolidated list of issues
+ranked by severity, with concrete reproductions where possible.
+
+**Tenant / tooling versions used:**
+- `a365` CLI: **1.1.178** (`Microsoft.Agents.A365.DevTools.Cli`)
+- `az` CLI: 2.x
+- M365 admin center: <https://admin.cloud.microsoft/>
+- Power Platform default environment, region: westeurope
+- Tenant: `*.onmicrosoft.com`, signed in as Global Admin
+
+---
+
+## TL;DR — what bit us, in priority order
+
+| # | Issue | Severity |
+|---|---|---|
+| 1 | CLI emits "**registered with N warning(s)**" success message even when the registration is **functionally broken** (RemoteProxy app missing API permission). Causes silent downstream "We couldn't load the Tool app" admin-center failure. | **Blocker** |
+| 2 | CLI looks up the literal string `.default` in the resource app's published OAuth2 scopes — fails for every backend that doesn't publish a scope literally named `.default`. Should resolve `.default` against the actual scope set. | **Blocker** |
+| 3 | Failed registration **leaves up to 4 Entra apps + 2 Power Platform connectors orphaned**. No `--rollback` or `--cleanup` mode. Soft-deleted apps further block re-registration via `identifierUris` collision. | **High** |
+| 4 | Admin center **"Reject" does not delete underlying Entra apps, PP connectors, or oauth2PermissionGrants**. Repeated reject cycles accumulate orphans indefinitely. | **High** |
+| 5 | Multiple undocumented length / format constraints (`serverName ≤ 20 incl. ext_`, `description ≤ 80`, `tool name ≤ 30`) — only enforced server-side with cryptic errors. | **High** |
+| 6 | M365 admin center surfaces opaque error **"We couldn't load the Tool app at the moment. Please try again later."** with no correlation ID, no telemetry, no admin diagnostic view. | **High** |
+| 7 | The CLI ships **no sample JSON file**, the schema is **undocumented**, and the README does not mention the `register-external-mcp-server` JSON shape. | Medium |
+| 8 | Registration creates **two PP connectors per server** (`ext_<name>` and `ext_<name>P` with a "P" suffix) — undocumented. The P-variant blocks name reuse just as much as the regular one. | Medium |
+| 9 | No public API or admin-center action to delete a stale request entry from "Tools > Requests". | Medium |
+| 10 | Popup-based consent windows in admin center auto-close, **destroying the HAR** before the developer can save it. Makes self-diagnosis nearly impossible. | Medium |
+
+---
+
+## 1. CLI says "success" when it isn't
+
+### What happened
+
+```text
+Registering MCP server 'ext_SnowCat'...
+Created Entra app 'ext_SnowCat-A365Proxy' (clientId: 54b5b763-...)
+Created Entra app 'ext_SnowCat-RemoteProxy' (clientId: 6eb9f80d-...)
+Created Entra app 'ext_SnowCat-PublicClients' (clientId: e9803e49-...)
+Updated redirect URIs on 'ext_SnowCat-A365Proxy'
+Scope '.default' not found on resource 8d73a1f1-...        ← CRITICAL
+Updated redirect URIs on 'ext_SnowCat-RemoteProxy'
+Added API permission on 'ext_SnowCat-A365Proxy'
+Added API permission on 'ext_SnowCat-PublicClients'
+Scope '.default' not found on resource 8d73a1f1-...
+Scope '.default' not found on resource 8d73a1f1-...
+ERROR: Failed to look up scope '.default' on resource app 8d73a1f1-... after retries: A task was canceled.. API permission not added to RemoteProxy app.
+ERROR: Could not find scope '.default' on resource app 8d73a1f1-... API permission not added to RemoteProxy app.
+MCP server 'ext_SnowCat' was registered with 2 warning(s):
+  - Could not find scope '.default' on resource app 8d73a1f1-... API permission not added to RemoteProxy app.
+  - Failed to look up scope '.default' on resource app 8d73a1f1-... after retries: A task was canceled.. API permission not added to RemoteProxy app.
+
+Please ask your tenant admin to approve MCP server 'ext_SnowCat'.
+```
+
+The CLI returns **exit code 0** and prints a happy "Please ask your tenant
+admin to approve" line. But the RemoteProxy → backend chain is broken — admin
+approval will fail with the opaque admin-center error in §6 below.
+
+### Suggested fix
+
+- Treat permission-add failures as **errors, not warnings**. Exit non-zero.
+- If a non-fatal warning is genuinely OK to proceed with, separate it visually
+  ("BLOCKING" vs "INFO") and explain consequence.
+- Optionally, **automatically rollback** the partial state on fatal errors.
+
+---
+
+## 2. `.default` scope lookup is wrong
+
+### What happened
+
+The CLI takes `remoteScopes: api://<backendAppId>/.default` from the
+registration JSON, then tries to add `.default` as a literal `Scope`-type
+permission on the RemoteProxy app's `requiredResourceAccess`. It does this by
+**searching the backend app's published `oauth2PermissionScopes` for an entry
+whose `value` equals `.default`** — which is never the case for normal apps.
+
+`.default` is a **runtime-only pseudo-scope** in MSAL/AAD: callers request it
+to mean "give me the union of everything I'm pre-authorized for or already
+configured to require". It is **never** declared as a published scope on the
+resource app.
+
+### Reproduction
+
+A backend Entra app with `api.oauth2PermissionScopes = [{ value: "access_as_user", … }]`
+will fail. The CLI logs:
+
+```
+Scope '.default' not found on resource 8d73a1f1-...
+```
+
+### Workaround we applied
+
+After registration, manually `PATCH https://graph.microsoft.com/v1.0/applications/{remoteProxyId}`:
+
+```json
+{
+  "requiredResourceAccess": [{
+    "resourceAppId": "<backendAppId>",
+    "resourceAccess": [{ "id": "<actual-scope-guid>", "type": "Scope" }]
+  }]
+}
+```
+
+…using the actual scope (e.g. `access_as_user`) GUID, not `.default`.
+
+### Suggested fix
+
+- When the user passes `.default` as a remoteScope, the CLI should:
+  1. Enumerate the resource app's published `oauth2PermissionScopes`.
+  2. Either pick the canonical scope (e.g. there's only one) or require the
+     user to pass an explicit scope name in `remoteScopes`.
+  3. Fail loudly upfront if no scopes are published, instead of silently
+     trying to find `.default`.
+- Document clearly: "`remoteScopes` should be the exact scope value(s) your
+  backend app publishes, or `.default` only when there is exactly one scope
+  with `adminConsentRequired = false` and you understand the implications."
+
+---
+
+## 3. Failed registrations leak artifacts
+
+### What happened
+
+Across 5 attempts we accumulated:
+
+- **3 sets** of orphan Entra apps × 4 apps each = **12 orphan apps** (proxy +
+  remote proxy + public clients + BYO).
+- **4 orphan Power Platform custom connectors** in the default environment.
+- **1 orphan oauth2PermissionGrant** on the Agent 365 service principal.
+
+None of these are cleaned up by the CLI. Worse, plain `az ad app delete` only
+**soft-deletes** an app — its `identifierUris`
+(`https://agent365.svc.cloud.microsoft/agents/servers/{name}/tenants/{tenant}`
+on the BYO app) keeps the name reserved until it's manually purged from the
+deleted-items bin via Graph:
+
+```http
+DELETE https://graph.microsoft.com/v1.0/directory/deletedItems/{appObjectId}
+```
+
+So a developer who fails registration and tries again with the same name gets
+this error from the second attempt, with no hint at the cause:
+
+```
+Another object with the same value for property identifierUris already exists.
+```
+
+### Reproduction
+
+1. Run `a365 develop-mcp register-external-mcp-server -f registration.json`
+   with a `description` longer than 80 chars.
+2. It creates 3 proxy Entra apps + 1 BYO app, then fails server-side.
+3. Re-run with a shorter description and the same `serverName`:
+   identifierUri collision.
+4. Even after `az ad app delete --id <byo-app-id>` for all four, re-registering
+   the same name still fails until you Graph-delete from `deletedItems`.
+
+### Suggested fix
+
+- **Atomic registration:** wrap proxy app + BYO app + connector creation in a
+  single transactional flow with auto-rollback on failure.
+- At minimum, when registration fails, the CLI should `--rollback`
+  automatically (delete the apps it just created AND purge from soft-delete bin).
+- Provide an `a365 develop-mcp cleanup --server-name ext_X` command that finds
+  and deletes orphan artifacts.
+
+---
+
+## 4. Admin "Reject" doesn't cascade
+
+### What happened
+
+After clicking **Reject** on a request in M365 admin center > Tools > Requests,
+all of the following remained intact in the tenant:
+
+- 4 Entra apps (`ext_<name>-A365Proxy`, `-RemoteProxy`, `-PublicClients`,
+  ` - BYO`).
+- 2 Power Platform custom connectors (`ext_<name>` and `ext_<name>P`).
+- 1 oauth2PermissionGrant on the Agent 365 SP (`PlatformRuntime.Internal.All`).
+
+Verified via Graph immediately after reject (count of artifacts unchanged).
+
+### User impact
+
+- Tenant pollution. Every rejected developer experiment leaves trash apps in
+  the directory.
+- Re-trying the same `serverName` requires manual cleanup the developer
+  doesn't know they need to do.
+- Org-wide identifierUri collisions when multiple devs experiment.
+
+### Suggested fix
+
+- Reject should perform best-effort cascade delete of:
+  - The 4 Entra apps (with permanent purge).
+  - The 2 PP custom connectors.
+  - Any oauth2PermissionGrants the registration created.
+- Surface a confirmation dialog ("This will permanently remove 4 Entra apps,
+  2 connectors, and revoke 1 grant. Continue?").
+
+---
+
+## 5. Undocumented format / length constraints
+
+| Field | Constraint | How discovered |
+|---|---|---|
+| `serverName` | Must start with `ext_` AND total length ≤ **20** chars | Server-side error after CLI accepts it |
+| `description` | ≤ **80** chars (otherwise: "Short description exceeds the maximum length of 80 characters") | Failed registration #1 |
+| Each `tools[].name` | ≤ **30** chars (otherwise: "Tool name 'X' exceeds the maximum length of 30 characters (current: 33)") | Failed registration #3 |
+| `serverName` | Must be globally unique across the tenant including soft-deleted apps' identifierUris | identifierUris collision |
+
+None of these are mentioned in the public docs or surfaced by the CLI's
+`--help`. **All four** were learned by failure.
+
+### Suggested fix
+
+- Document in the [Manage tools for agents](https://learn.microsoft.com/en-us/microsoft-365/admin/manage/manage-tools-for-agent?view=o365-worldwide#bring-your-own-byo-mcp-server)
+  reference.
+- Validate client-side in the CLI before any apps are created.
+- If possible, relax the limits (30 chars is very tight for descriptive tool
+  names like `validate_servicenow_configuration`).
+
+---
+
+## 6. Admin center error: "We couldn't load the Tool app"
+
+### What we saw
+
+When the tenant admin opens **M365 admin center > Tools > Requests > {request}**:
+
+> ⊘ We couldn't load the Tool app at the moment. Please try again later.
+
+The Approve button is greyed out; only Reject works. There is:
+
+- No correlation ID
+- No "more details" expander
+- No link to a diagnostic page or admin telemetry view
+- The error persists across browser refresh, incognito retry, and waiting 30+ minutes
+
+In our case, root cause was the broken RemoteProxy permission from §1/§2.
+There was no way for the admin to know that without the developer doing
+Graph-level forensics.
+
+### Suggested fix
+
+- Surface the actual failure (e.g. "RemoteProxy app `xxx` is missing required
+  delegated permission `access_as_user` on resource `yyy`. Ask the developer
+  to re-register with a valid `remoteScopes` value.")
+- At minimum, expose a correlation/request ID admins can paste into a support
+  ticket.
+- Add a "Validate" button that runs the same checks the Approve flow does,
+  surfacing all problems at once instead of only the first one that blocks
+  page rendering.
+
+---
+
+## 7. Missing CLI / schema documentation
+
+The `a365 develop-mcp register-external-mcp-server -f <file>` command requires a
+JSON file but:
+
+- Ships **no sample**, no `--init` / `--scaffold` to produce one.
+- The expected schema is **not** in `a365 develop-mcp register-external-mcp-server --help`.
+- Microsoft Learn does not document the field names.
+- Trial-and-error on field names cost ~30 minutes by itself.
+
+### The schema we reverse-engineered
+
+```jsonc
+{
+  "serverName": "ext_MyServer",                  // string, ext_ + ≤16 chars
+  "serverUrl": "https://my.example.com/mcp",     // public HTTPS endpoint
+  "authType": "EntraOAuth",                      // | "None" | …?
+  "description": "Short description.",           // ≤ 80 chars
+  "publisherName": "Contoso IT",
+  "remoteScopes": "api://<backendAppId>/<scope>",// see §2 — NOT `.default`
+  "tenantId": "<tenant-guid>",
+  "tools": [
+    { "name": "tool_name", "description": "..." }  // name ≤ 30 chars
+  ]
+}
+```
+
+### Suggested fix
+
+- Add `a365 develop-mcp register-external-mcp-server --init my-config.json` to
+  scaffold a commented template.
+- Publish the schema (JSON Schema would be ideal — IDEs could lint it).
+- Update Microsoft Learn page with the full schema + length constraints.
+
+---
+
+## 8. Two PP connectors per registration
+
+Registration creates **both** `ext_<name>` and `ext_<name>P` Power Platform
+custom connectors in the user's default environment. Example:
+
+```
+shared_ext-5fsnowcat-5fde08...   (displayName: ext_SnowCat)
+shared_ext-5fsnowcatp-5fde08...  (displayName: ext_SnowCatP)
+```
+
+What `P` means is undocumented (Production vs Preview? Public vs Private?).
+Both block name reuse on a re-registration. Failed registration #4 exhibited:
+
+```
+Failed to create connector shared_ext_ServiceNowMCPP for environment 242b55fb-...
+Status: BadRequest, Error: HTTP 400: Bad Request
+```
+
+…because the P-variant of a previous failed attempt was still present, even
+though its sibling had been cleaned up.
+
+### Suggested fix
+
+- Document the dual-connector pattern.
+- Make connector creation atomic (delete first if a sibling already exists, or
+  fail upfront with a clear "stale connector found, delete it first" message).
+
+---
+
+## 9. No way to delete a stale request from the admin center
+
+If the M365 admin center request entry exists but its underlying Entra apps
+have been deleted (e.g. developer cleaned up manually), the request entry
+sits in **Tools > Requests** forever. Neither Approve nor Reject can resolve
+it — Approve fails with §6, and Reject doesn't cascade-delete (§4) so the
+artifacts stay broken.
+
+There is no admin-center API surface or UI button for deleting a stuck
+request.
+
+### Suggested fix
+
+- Add a "Delete" or "Force remove" action on stale requests.
+- Implement a server-side health check that auto-removes requests whose
+  underlying Entra apps no longer exist.
+
+---
+
+## 10. HAR loss in popup consent flows
+
+Standard consent flows in M365 admin center spawn a popup window pointing at
+`login.microsoftonline.com/{tenant}/.../adminconsent`. When that popup completes
+(or errors and auto-closes), the popup's HAR is **destroyed** with the window.
+
+This makes self-diagnosis essentially impossible: the failing call is in the
+popup, but you can't capture it. We tried 3+ times with DevTools open in the
+popup and "Preserve log" enabled — the HAR was empty after the close.
+
+### Suggested fix
+
+- For the admin-center consent flow, prefer same-window navigation (or at
+  minimum, log the resulting redirect URL with `error=`/`error_description=`
+  parameters into the parent window before the popup closes).
+
+---
+
+## Reproduction summary
+
+The minimum steps to hit at least 6 of the issues above:
+
+1. Build a remote MCP server backed by an Entra app that publishes a single
+   custom delegated scope (e.g. `access_as_user`). **Don't** publish a scope
+   literally named `.default`.
+2. Author a registration JSON with `remoteScopes: api://<appId>/.default`.
+3. Run `a365 develop-mcp register-external-mcp-server -f config.json`.
+4. CLI completes with exit 0 and a "registered with 2 warning(s)" message.
+5. Sign in to M365 admin center as Global Admin → Tools → Requests → click
+   the new request → see "We couldn't load the Tool app at the moment".
+6. Click Reject. Verify via `az ad app list` that all 4 apps still exist, and
+   via PowerApps API that 2 connectors still exist.
+7. Try to re-register the same name → identifierUris collision, requires
+   manual purge from `directory/deletedItems` to recover.
+
+---
+
+## What "good" would look like
+
+For a developer publishing their first BYO MCP server, the ideal flow is:
+
+```text
+$ a365 develop-mcp init                # scaffolds registration.json with comments
+$ a365 develop-mcp validate -f registration.json   # checks all constraints client-side
+$ a365 develop-mcp register-external-mcp-server -f registration.json
+✓ Created 4 Entra apps
+✓ Wired RemoteProxy permission to backend (scope: access_as_user)
+✓ Created 2 Power Platform connectors
+✓ Submitted approval request to admin center
+
+Server ext_X is awaiting tenant admin approval.
+Track status: a365 develop-mcp status ext_X
+```
+
+…and on failure:
+
+```text
+✗ Failed to wire RemoteProxy permission: backend app does not publish a scope.
+  Either:
+    - Publish a delegated scope on app aaaa-bbbb-cccc, OR
+    - Use 'remoteScopes: api://aaaa-bbbb-cccc/access_as_user'
+
+  Rolling back created artifacts...
+  ✓ Deleted 3 Entra apps
+  ✓ Purged from soft-delete bin
+  ✓ Deleted 0 PP connectors
+
+  No artifacts left behind.
+```
+
+…and the admin can click Approve / Reject knowing Reject will fully clean up.
+
+---
+
+*Captured by a developer doing live tenant validation, May 2026. Happy to
+provide tenant IDs, app object IDs, HARs, and exact CLI invocations to the
+PM team on request.*
