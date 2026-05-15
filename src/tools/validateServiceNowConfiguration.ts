@@ -72,7 +72,7 @@ function createClient(accessToken: string): AxiosInstance {
 export function registerValidateServiceNowConfigurationTool(server: McpServer, tokenManager: TokenManager): void {
 
   server.tool(
-    "validate_servicenow_configuration",
+    "validate_servicenow_config",
     [
       "Validate ServiceNow OAuth/token configuration and effective catalog permissions.",
       "This tool checks whether authentication works and whether core Service Catalog APIs are reachable.",

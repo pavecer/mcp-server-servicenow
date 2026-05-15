@@ -46,7 +46,7 @@ The intended composition is:
    endpoint is the deployed Azure Function from this repo
    (`https://<func>.azurewebsites.net/mcp`). It exposes the six MCP tools
    (`search_catalog_items`, `get_catalog_item_form`, `place_order`,
-   `list_user_orders`, `update_order`, `validate_servicenow_configuration`).
+   `list_user_orders`, `update_order`, `validate_servicenow_config`).
 4. **Topics under `ESS ServiceNow Catalog/topics/`** drive the deterministic
    conversation around the MCP tool calls and render the Adaptive Cards
    returned by `place_order` / `get_catalog_item_form`.

@@ -11,12 +11,13 @@ A stateless [Model Context Protocol](https://modelcontextprotocol.io) server for
 | `place_order` | Submits the order and returns a confirmation Adaptive Card |
 | `list_user_orders` | Lists the caller's open (non-closed) catalog orders, enriched with their request items |
 | `update_order` | Updates a small allowlist of requestor-mutable fields on the caller's order (`short_description`, `description`, `comments`, `urgency`, `priority`) |
-| `validate_servicenow_configuration` | Validates OAuth and catalog API access end-to-end |
+| `validate_servicenow_config` | Validates OAuth and catalog API access end-to-end |
 
 **Related documentation:**
 
 - [Copilot Studio Setup](COPILOT_STUDIO_SETUP.md) -- add MCP tool and configure ordering topic
 - [Copilot Studio reference agents](copilot-studio/README.md) -- how this MCP server fits the ESS IT / ESS ServiceNow Catalog agent architecture
+- [Agent 365 BYO MCP](docs/AGENT_365_BYO_MCP.md) -- register this server in the Microsoft 365 admin center for tenant-wide governance
 - [ServiceNow Setup](docs/SERVICENOW_SETUP.md) -- OAuth app, integration user, and permissions
 - [Action Contracts](docs/MCS_ACTION_CONTRACTS.md) -- tool schemas for Copilot Studio topic authors
 - [Optional Container Deployment](docs/DEPLOY_CONTAINER_AZURE.md) -- run as one Docker container in Azure Container Apps
@@ -159,6 +160,27 @@ See [COPILOT_STUDIO_SETUP.md](COPILOT_STUDIO_SETUP.md) for the full guide.
 
 3. Click **Create** > sign in when prompted > verify all 4 tools appear.
 4. Import the ordering topic from `copilot-studio/topics/` into your agent.
+
+---
+
+### Step 5 -- (Optional) Register with Microsoft Agent 365 (BYO MCP)
+
+To make this MCP server tenant-governed (visible in **Microsoft 365 admin center > Agents > Tools > Registry**, monitored in Defender XDR, and discoverable from Copilot Studio, VS Code, Claude Code, and GitHub Copilot CLI), register it as a Bring-Your-Own MCP server with [Microsoft Agent 365](https://learn.microsoft.com/en-us/microsoft-365/admin/manage/manage-tools-for-agent?view=o365-worldwide#bring-your-own-byo-mcp-server).
+
+The server already speaks `EntraOAuth` end-to-end, so no code changes are required. Use the helper script:
+
+```powershell
+pwsh -File scripts/register-agent365-mcp.ps1 `
+  -ServerName     "ext_ServiceNowMCP" `
+  -PublisherName  "<your-org>" `
+  -McpEndpointUrl "https://<funcapp>.azurewebsites.net/mcp" `
+  -EntraClientId  "<ENTRA_CLIENT_ID>" `
+  -TenantId       "<ENTRA_TENANT_ID>"
+```
+
+> The CLI requires the server name to start with `ext_` and be ≤ 20 characters.
+
+A tenant admin (Global admin or AI admin) then approves the request in the Microsoft 365 admin center. Full step-by-step guide, troubleshooting, and Defender hunting query: [docs/AGENT_365_BYO_MCP.md](docs/AGENT_365_BYO_MCP.md).
 
 ---
 
@@ -358,7 +380,7 @@ az account get-access-token --resource api://<ENTRA_CLIENT_ID> --query accessTok
 
 **Dynamic discovery fails in Copilot Studio** -- Verify `ENTRA_TENANT_ID` and `ENTRA_CLIENT_ID` are set. Confirm the OIDC endpoint returns 200. If you changed OAuth settings after the MCP tool was added, **delete and re-add the connection** -- Power Platform caches OIDC metadata on first connect.
 
-**validate_servicenow_configuration errors** -- Run with `probeOrderNow: false` first to isolate auth vs. catalog access issues.
+**validate_servicenow_config errors** -- Run with `probeOrderNow: false` first to isolate auth vs. catalog access issues.
 
 ---
 

@@ -12,7 +12,7 @@ describe("getMinimalToolDefinitions", () => {
       "place_order",
       "search_catalog_items",
       "update_order",
-      "validate_servicenow_configuration"
+      "validate_servicenow_config"
     ]);
   });
 
@@ -58,9 +58,9 @@ describe("getMinimalToolDefinitions", () => {
     ]);
   });
 
-  it("validate_servicenow_configuration uses the renamed forceConfiguredCredentials parameter", () => {
+  it("validate_servicenow_config uses the renamed forceConfiguredCredentials parameter", () => {
     const props = (
-      (byName.validate_servicenow_configuration.inputSchema as Record<string, unknown>).properties as Record<string, unknown>
+      (byName.validate_servicenow_config.inputSchema as Record<string, unknown>).properties as Record<string, unknown>
     );
     expect(props.forceConfiguredCredentials).toBeDefined();
     expect(props.forceClientCredentials).toBeUndefined();

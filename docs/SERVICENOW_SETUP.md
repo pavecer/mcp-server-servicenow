@@ -78,17 +78,17 @@ Preferred enterprise approach:
 > - **Read** access to the `sys_user` table (to resolve caller email → sys_id)
 > - **Write** access to the `sc_request` table (to patch `requested_for` after order creation)
 >
-> In many default environments `itil` enables this indirectly, but it is usually broader than required. Validate the final permission set with `validate_servicenow_configuration`.
+> In many default environments `itil` enables this indirectly, but it is usually broader than required. Validate the final permission set with `validate_servicenow_config`.
 
 ---
 
 ## Step 4 — Validate Access
 
-After deploying the MCP server, call the `validate_servicenow_configuration` tool to confirm everything is working:
+After deploying the MCP server, call the `validate_servicenow_config` tool to confirm everything is working:
 
 ```json
 {
-  "name": "validate_servicenow_configuration",
+  "name": "validate_servicenow_config",
   "arguments": {
     "query": "laptop",
     "probeOrderNow": false
@@ -106,7 +106,7 @@ To also probe order placement (creates and immediately cancels a test order):
 
 ```json
 {
-  "name": "validate_servicenow_configuration",
+  "name": "validate_servicenow_config",
   "arguments": {
     "query": "laptop",
     "probeOrderNow": true,

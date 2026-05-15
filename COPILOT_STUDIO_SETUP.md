@@ -40,7 +40,7 @@ If you see the catalog text but no Adaptive Card UI in the agent, **check the ag
    - `search_catalog_items`
    - `get_catalog_item_form`
    - `place_order`
-   - `validate_servicenow_configuration`
+   - `validate_servicenow_config`
 
 ---
 

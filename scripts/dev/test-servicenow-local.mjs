@@ -20,7 +20,7 @@
  *
  * Commands:
  *   validate                          Run the same checks as the
- *                                     validate_servicenow_configuration tool.
+ *                                     validate_servicenow_config tool.
  *   search <query> [limit]            Full-text catalog search.
  *   form <itemSysId>                  Fetch the order form for an item.
  *   orders                            List the caller's open orders.

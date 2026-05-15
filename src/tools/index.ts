@@ -28,7 +28,7 @@ const TOOL_NAMES = [
   "search_catalog_items",
   "get_catalog_item_form",
   "place_order",
-  "validate_servicenow_configuration",
+  "validate_servicenow_config",
   "list_user_orders",
   "update_order"
 ] as const;
@@ -116,7 +116,7 @@ export function getMinimalToolDefinitions() {
       }
     },
     {
-      name: "validate_servicenow_configuration",
+      name: "validate_servicenow_config",
       description: "Validate ServiceNow authentication and catalog access.",
       inputSchema: {
         type: "object",

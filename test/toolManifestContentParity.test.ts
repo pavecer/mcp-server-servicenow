@@ -57,7 +57,7 @@ describe("MCP tool manifest content parity (FU#8)", () => {
       "place_order",
       "search_catalog_items",
       "update_order",
-      "validate_servicenow_configuration"
+      "validate_servicenow_config"
     ]);
   });
 
