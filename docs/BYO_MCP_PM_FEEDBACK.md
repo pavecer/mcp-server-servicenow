@@ -34,6 +34,7 @@ ranked by severity, with concrete reproductions where possible.
 | 9 | No public API or admin-center action to delete a stale request entry from "Tools > Requests". | Medium |
 | 10 | Popup-based consent windows in admin center auto-close, **destroying the HAR** before the developer can save it. Makes self-diagnosis nearly impossible. | Medium |
 | 11 | Approved BYO MCP server appears in the **`discoverMCPServers`** tenant catalog and in `a365 develop list-available`, but **never appears in the Copilot Studio MCP picker** ("Add a tool → Model Context Protocol" tab). **Root cause confirmed:** the PP connectors created by the registration flow have `properties.capabilities = []` instead of `["actions"]`. Copilot Studio's picker filters by `capabilities has 'actions'`, silently excluding the server. **Workaround validated end-to-end** — PATCH the canonical connector in the system env to set `capabilities = ["actions"]`; tenant-scoped replicas (`shared_tc-ext-*`) propagate the fix to user envs within ~1 hour. | **Blocker** |
+| 12 | **BYO MCP does NOT deliver seamless SSO to end users** — the registration flow creates the OAuth custom connector with `enableOnbehalfOfLogin: true` but **fails to preauthorize** the Azure API Connections service principal (`fe053c5f-3692-4f14-aef2-ee34fc081cae`) on the connector app. Per Microsoft's own docs, this means *"users would need to explicitly sign in each time they use the connector"*. Every end user of a Copilot Studio agent that uses a BYO MCP server will hit the per-user OAuth popup ("Open connection manager"), defeating the value proposition of MCP as a tenant-shared MCS tool. | **Blocker** |
 
 ---
 
@@ -594,6 +595,159 @@ canonical is the only path; the platform's replication eventually copies
 7. Wait for tenant-connector replication (observed: tens of minutes).
 8. Refresh Copilot Studio MCP picker. **Result: `ext_<name>` appears under
    the Model Context Protocol tab and can be added to the agent.**
+
+---
+
+## 12. BYO MCP does not deliver seamless SSO — every end user hits the OAuth popup
+
+### What happened
+
+After completing the full registration + admin approval + visibility-fix
+(issue #11) flow, the BYO MCP server is finally selectable in the Copilot
+Studio "Add a tool → Model Context Protocol" picker. However, **the BYO
+feature is implemented on top of the existing Power Platform custom connector
+model with OAuth 2.0**, and inspection of the resulting Entra app
+configuration shows that the registration flow **does not configure the
+preauthorization required for the documented "seamless OBO" experience**.
+
+The result: every end user of any Copilot Studio agent that uses the BYO MCP
+server has to go through the per-user OAuth consent / sign-in popup (the
+infamous "Open connection manager" UX) — exactly the friction MCS adopters
+expect MCP to *eliminate*.
+
+### Evidence (verified via Graph API on the live tenant)
+
+The Agent 365 BYO registration creates 4 Entra apps:
+
+| App | Purpose | `api.oauth2PermissionScopes` | `api.preAuthorizedApplications` |
+|---|---|---|---|
+| `<name>-A365Proxy` (clientId of the PP connector) | "Connector app" — what the PP custom connector authenticates as | **(none)** | **(none)** |
+| `<name>-RemoteProxy` | Forwards OBO to the backend MCP | (none) | (none) |
+| `<name>-PublicClients` | Public-client redirect URIs (VS Code, localhost) | (none) | (none) |
+| `<name>-BYO` (the backend / "service" app) | Exposes the API the MCP backend protects | `Tools.ListInvoke.All` | **(none)** |
+
+The PP custom connector itself *is* configured for OBO at the connector level
+(`enableOnbehalfOfLogin: "true"`, `IsOnbehalfofLoginSupported: true`,
+`IsFirstParty: "True"`), but on the Entra side the chain that would make OBO
+work seamlessly is missing.
+
+### Why this matters — Microsoft's own docs spell it out
+
+From [Configure OBO authentication for custom connectors](https://learn.microsoft.com/microsoft-copilot-studio/advanced-custom-connector-on-behalf-of)
+(emphasis added):
+
+> In the **Authorized client applications** section, select **Add a client
+> application**. Enter the client ID for the Microsoft Azure API Connections
+> service principal: `fe053c5f-3692-4f14-aef2-ee34fc081cae`.
+> Select the scope you created. Select **Add application**.
+>
+> You need to authorize the Azure API Connections service principal to sign
+> in on behalf of users. **Without this configuration, users would need to
+> explicitly sign in each time they use the connector.**
+
+That is the entire point of MCP-as-a-tool in Copilot Studio: a tenant admin
+publishes a server once, and every authorised end user of any agent that
+references it gets a transparent OBO experience. The BYO flow as shipped
+breaks this promise because it skips the preauthorization step.
+
+### Verification commands
+
+```powershell
+# 1. The Azure API Connections SP exists in the tenant (it's a global Microsoft SP)
+az ad sp show --id fe053c5f-3692-4f14-aef2-ee34fc081cae --query 'displayName' -o tsv
+# -> "Azure API Connections"
+
+# 2. The BYO-created apps have ZERO preAuthorizedApplications
+$gToken = az account get-access-token --resource https://graph.microsoft.com/ --query accessToken -o tsv
+$hg = @{ Authorization = "Bearer $gToken" }
+foreach ($appId in @(
+  "<A365Proxy-appId>", "<RemoteProxy-appId>",
+  "<PublicClients-appId>", "<BYO-appId>"
+)) {
+  $a = Invoke-RestMethod -Method Get -Headers $hg `
+       -Uri "https://graph.microsoft.com/v1.0/applications(appId='$appId')"
+  "$($a.displayName) -> preAuthorized=$($a.api.preAuthorizedApplications.Count) scopes=$($a.api.oauth2PermissionScopes.Count)"
+}
+# Observed on this tenant:
+#   <name>-A365Proxy     -> preAuthorized=0 scopes=0
+#   <name>-RemoteProxy   -> preAuthorized=0 scopes=0
+#   <name>-PublicClients -> preAuthorized=0 scopes=0
+#   <name>-BYO           -> preAuthorized=0 scopes=1   (Tools.ListInvoke.All)
+```
+
+### Comparison: how a working SSO connector looks
+
+The Microsoft 365 built-in MCP connectors (e.g. `shared_a365copilotchatmcp`,
+`shared_a365adminmcp`) use a **certificate-based** OAuth (`identityProvider:
+aadcertificate`) and have full first-party trust, so the user never sees a
+sign-in popup. They cannot fail the preauthorization check because they ARE
+first-party. The Agent 365 BYO flow instead uses
+`identityProvider: aad` with a customer-owned client app (A365Proxy) and a
+customer-owned backend app (BYO) — i.e. the *normal* custom-connector OBO
+path — but then doesn't actually complete the OBO setup.
+
+### Suggested fix (low effort, high impact)
+
+During `a365 develop-mcp register-external-mcp-server`, after creating the
+A365Proxy app, the registration should also:
+
+1. **Expose a scope on the A365Proxy app**, e.g. `access_as_user`
+   (`oauth2PermissionScopes` entry).
+2. **Add the Azure API Connections SP as a preauthorized client** on
+   A365Proxy with that scope:
+
+   ```http
+   PATCH https://graph.microsoft.com/v1.0/applications/{a365proxy-objectId}
+   Content-Type: application/json
+
+   {
+     "api": {
+       "preAuthorizedApplications": [
+         {
+           "appId": "fe053c5f-3692-4f14-aef2-ee34fc081cae",
+           "delegatedPermissionIds": ["<id-of-access_as_user-scope>"]
+         }
+       ]
+     }
+   }
+   ```
+3. **Add the A365Proxy app as a preauthorized client on the BYO service app**
+   for the `Tools.ListInvoke.All` scope, so the second hop of the OBO chain
+   (connector → backend) also doesn't prompt.
+
+With these three additions, the end-user experience for *any* user
+authorised to use the agent becomes: open the agent → ask a question that
+triggers the tool → answer is returned. No popups, no per-user
+connection record, no "Open connection manager" detour.
+
+### Why this is a Blocker, not a Medium
+
+A BYO MCP server that the admin has explicitly approved tenant-wide
+should behave like a built-in tool: invisible plumbing. If every end user
+has to click through an OAuth consent popup the first time the agent
+fires the tool — and again on every new session if the connection record
+expires — then BYO MCP delivers a *worse* UX than just configuring a
+plain custom connector (where at least the maker knows that's expected).
+The whole "shared, governed, tenant-managed MCP" pitch falls apart.
+
+### Reproduction
+
+1. Complete BYO registration + admin approval + capabilities patch (#11).
+2. In Copilot Studio (in an env where the connector replicated, e.g.
+   "Contoso Personal Productivity"), open or create an agent.
+3. **Tools → Add a tool → Model Context Protocol → search `ext_<name>` →
+   Add to agent**.
+4. As the maker, observe that adding the tool prompts you to **Create
+   connection** — this opens a sign-in popup against the A365Proxy app.
+5. Publish the agent and share it with a second test user who has *no
+   prior connection* to this connector.
+6. As that test user, open the agent and ask a question that should fire
+   the MCP tool.
+7. **Observed:** the agent stops and asks the user to sign in / create a
+   connection (the "Open connection manager" experience).
+8. **Expected (per BYO MCP value proposition):** the call goes through
+   transparently — the user's existing M365 session is OBO-exchanged for
+   a token that the backend accepts. No popup.
 
 ---
 
