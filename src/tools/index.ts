@@ -73,13 +73,24 @@ export function getMinimalToolDefinitions() {
     },
     {
       name: "get_catalog_item_form",
-      description: "Get the order form for a selected ServiceNow catalog item.",
+      description: "Get the order form for a selected ServiceNow catalog item, optionally prefilled from conversation context.",
       inputSchema: {
         type: "object",
         properties: {
           itemSysId: {
             type: "string",
             description: "Selected catalog item sys_id"
+          },
+          userContext: {
+            type: "string",
+            description: "Optional free-text summary of the conversation used to prefill the form (e.g. 'User wants a black iPhone with 256GB on Verizon')."
+          },
+          prefillHints: {
+            type: "object",
+            description: "Optional structured field/value hints extracted from the conversation. Keys may be ServiceNow variable names or label keywords (color, storage, carrier, model, justification, quantity).",
+            additionalProperties: {
+              type: ["string", "number", "boolean"]
+            }
           }
         },
         required: ["itemSysId"]

@@ -93,7 +93,7 @@ function readBooleanCandidate(candidate: unknown): boolean | undefined {
   return undefined;
 }
 
-function getVariableLabel(variable: ServiceNowVariable): string {
+export function getVariableLabel(variable: ServiceNowVariable): string {
   return (
     toAdaptiveText(
       readStringFromCandidate(variable.label, ["label", "display_value", "displayValue"])
@@ -162,7 +162,7 @@ function canonicalizeVariableType(value: string): string {
     .replace(/[\s-]+/g, "_");
 }
 
-function normalizeVariableType(variable: ServiceNowVariable): string {
+export function normalizeVariableType(variable: ServiceNowVariable): string {
   const candidates = [
     variable.friendly_type,
     variable.display_type,
@@ -186,7 +186,7 @@ function normalizeVariableType(variable: ServiceNowVariable): string {
   return "1";
 }
 
-function normalizeChoices(variable: ServiceNowVariable): Array<{ title: string; value: string }> {
+export function normalizeChoices(variable: ServiceNowVariable): Array<{ title: string; value: string }> {
   const rawChoices = getRawChoices(variable);
   if (!rawChoices) {
     return [];
@@ -259,7 +259,7 @@ function normalizeChoices(variable: ServiceNowVariable): Array<{ title: string; 
   return [];
 }
 
-function isMultiSelectType(type: string): boolean {
+export function isMultiSelectType(type: string): boolean {
   return [
     "21",
     "33",
@@ -322,7 +322,7 @@ function looksLikeVariableRecord(value: unknown): value is ServiceNowVariable {
   return ["name", "label", "type", "question_type", "ui_type", "field_type"].some(key => key in record);
 }
 
-function collectVariables(variables?: ServiceNowVariable[]): ServiceNowVariable[] {
+export function collectVariables(variables?: ServiceNowVariable[]): ServiceNowVariable[] {
   if (!variables || variables.length === 0) {
     return [];
   }
@@ -458,12 +458,18 @@ export function buildCatalogItemSelectionAdaptiveCard(
  *  5 = Boolean/checkbox, 6 = Date/Time, 7 = Email, 8 = Date,
  *  14 = Select box, 18 = Lookup select, 21 = Multiple choice
  */
-function buildVariableInput(variable: ServiceNowVariable): Record<string, unknown> | null {
+function buildVariableInput(
+  variable: ServiceNowVariable,
+  prefilledValues?: Record<string, string | number | boolean>
+): Record<string, unknown> | null {
   const type = normalizeVariableType(variable);
   const choices = normalizeChoices(variable);
   const normalizedLabel = getVariableLabel(variable);
   const normalizedInstructions = getVariableInstructions(variable);
-  const defaultValue = getVariableDefaultValue(variable);
+  const fallbackDefault = getVariableDefaultValue(variable);
+  const prefilledRaw = prefilledValues?.[variable.name];
+  const hasPrefill = prefilledRaw !== undefined && prefilledRaw !== null && String(prefilledRaw).length > 0;
+  const defaultValue = hasPrefill ? String(prefilledRaw) : fallbackDefault;
   const label = normalizedLabel + (variable.mandatory ? " *" : "");
   const required = variable.mandatory ?? false;
 
@@ -589,10 +595,20 @@ function buildVariableInput(variable: ServiceNowVariable): Record<string, unknow
 /**
  * Builds an Adaptive Card that represents the order form for a catalog item.
  * The card contains inputs for each variable and a submit action.
+ *
+ * `prefilledValues` is an optional map keyed by variable name (the same key
+ * `place_order` later expects). When provided, matching inputs are
+ * pre-populated and a small notice is shown so the user understands which
+ * fields were filled in for them.
  */
-export function buildOrderFormAdaptiveCard(item: ServiceNowCatalogItemDetail): Record<string, unknown> {
+export function buildOrderFormAdaptiveCard(
+  item: ServiceNowCatalogItemDetail,
+  prefilledValues?: Record<string, string | number | boolean>
+): Record<string, unknown> {
   const shortDescription = toAdaptiveText(item.short_description);
   const description = toAdaptiveText(item.description);
+  const effectivePrefill = prefilledValues ?? {};
+  const prefilledCount = Object.keys(effectivePrefill).length;
 
   const body: Record<string, unknown>[] = [
     {
@@ -625,6 +641,18 @@ export function buildOrderFormAdaptiveCard(item: ServiceNowCatalogItemDetail): R
 
   const variables = collectVariables(item.variables);
 
+  if (prefilledCount > 0) {
+    body.push({
+      type: "TextBlock",
+      text: `✨ ${prefilledCount} field${prefilledCount === 1 ? "" : "s"} prefilled from your conversation. Please review and adjust before submitting.`,
+      wrap: true,
+      spacing: "Medium",
+      color: "Accent",
+      isSubtle: false,
+      weight: "Bolder"
+    });
+  }
+
   if (variables.length > 0) {
     body.push({
       type: "TextBlock",
@@ -634,7 +662,7 @@ export function buildOrderFormAdaptiveCard(item: ServiceNowCatalogItemDetail): R
     });
 
     for (const variable of variables) {
-      const input = buildVariableInput(variable);
+      const input = buildVariableInput(variable, effectivePrefill);
       if (input) {
         body.push(input);
       }

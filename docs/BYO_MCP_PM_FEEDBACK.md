@@ -34,7 +34,7 @@ ranked by severity, with concrete reproductions where possible.
 | 9 | No public API or admin-center action to delete a stale request entry from "Tools > Requests". | Medium |
 | 10 | Popup-based consent windows in admin center auto-close, **destroying the HAR** before the developer can save it. Makes self-diagnosis nearly impossible. | Medium |
 | 11 | Approved BYO MCP server appears in the **`discoverMCPServers`** tenant catalog and in `a365 develop list-available`, but **never appears in the Copilot Studio MCP picker** ("Add a tool → Model Context Protocol" tab). **Root cause confirmed:** the PP connectors created by the registration flow have `properties.capabilities = []` instead of `["actions"]`. Copilot Studio's picker filters by `capabilities has 'actions'`, silently excluding the server. **Workaround validated end-to-end** — PATCH the canonical connector in the system env to set `capabilities = ["actions"]`; tenant-scoped replicas (`shared_tc-ext-*`) propagate the fix to user envs within ~1 hour. | **Blocker** |
-| 12 | **BYO MCP does NOT deliver seamless SSO to end users** — the registration flow creates the OAuth custom connector with `enableOnbehalfOfLogin: true` but **fails to preauthorize** the Azure API Connections service principal (`fe053c5f-3692-4f14-aef2-ee34fc081cae`) on the connector app. Per Microsoft's own docs, this means *"users would need to explicitly sign in each time they use the connector"*. Every end user of a Copilot Studio agent that uses a BYO MCP server will hit the per-user OAuth popup ("Open connection manager"), defeating the value proposition of MCP as a tenant-shared MCS tool. | **Blocker** |
+| 12 | **BYO MCP does NOT deliver seamless SSO to end users.** The registration flow creates the OAuth custom connector with `enableOnbehalfOfLogin: true` but ships **none** of the four Entra-side configurations that Microsoft's own docs require for silent OBO: (a) a scope on the connector app, (b) preauth of the Azure API Connections SP (`fe053c5f-...`) on the connector app, (c) preauth of the connector app on the backend service app, (d) preauth of the first-party hosts (Power Apps/Copilot Studio `7df0a125-...`, Teams, M365 Copilot) on the backend service app. Per Microsoft's documented behavior, *"users would need to explicitly sign in each time they use the connector"* — BYO MCP ships an **incomplete implementation of the documented OBO recipe** for custom connectors, defeating the value proposition of MCP as a tenant-shared MCS tool. | **Blocker** |
 
 ---
 
@@ -44,21 +44,21 @@ ranked by severity, with concrete reproductions where possible.
 
 ```text
 Registering MCP server 'ext_SnowCat'...
-Created Entra app 'ext_SnowCat-A365Proxy' (clientId: 54b5b763-...)
-Created Entra app 'ext_SnowCat-RemoteProxy' (clientId: 6eb9f80d-...)
-Created Entra app 'ext_SnowCat-PublicClients' (clientId: e9803e49-...)
+Created Entra app 'ext_SnowCat-A365Proxy' (clientId: <a365proxy-appId>)
+Created Entra app 'ext_SnowCat-RemoteProxy' (clientId: <remoteproxy-appId>)
+Created Entra app 'ext_SnowCat-PublicClients' (clientId: <publicclients-appId>)
 Updated redirect URIs on 'ext_SnowCat-A365Proxy'
-Scope '.default' not found on resource 8d73a1f1-...        ← CRITICAL
+Scope '.default' not found on resource <backend-appId>        ← CRITICAL
 Updated redirect URIs on 'ext_SnowCat-RemoteProxy'
 Added API permission on 'ext_SnowCat-A365Proxy'
 Added API permission on 'ext_SnowCat-PublicClients'
-Scope '.default' not found on resource 8d73a1f1-...
-Scope '.default' not found on resource 8d73a1f1-...
-ERROR: Failed to look up scope '.default' on resource app 8d73a1f1-... after retries: A task was canceled.. API permission not added to RemoteProxy app.
-ERROR: Could not find scope '.default' on resource app 8d73a1f1-... API permission not added to RemoteProxy app.
+Scope '.default' not found on resource <backend-appId>
+Scope '.default' not found on resource <backend-appId>
+ERROR: Failed to look up scope '.default' on resource app <backend-appId> after retries: A task was canceled.. API permission not added to RemoteProxy app.
+ERROR: Could not find scope '.default' on resource app <backend-appId> API permission not added to RemoteProxy app.
 MCP server 'ext_SnowCat' was registered with 2 warning(s):
-  - Could not find scope '.default' on resource app 8d73a1f1-... API permission not added to RemoteProxy app.
-  - Failed to look up scope '.default' on resource app 8d73a1f1-... after retries: A task was canceled.. API permission not added to RemoteProxy app.
+  - Could not find scope '.default' on resource app <backend-appId> API permission not added to RemoteProxy app.
+  - Failed to look up scope '.default' on resource app <backend-appId> after retries: A task was canceled.. API permission not added to RemoteProxy app.
 
 Please ask your tenant admin to approve MCP server 'ext_SnowCat'.
 ```
@@ -97,7 +97,7 @@ A backend Entra app with `api.oauth2PermissionScopes = [{ value: "access_as_user
 will fail. The CLI logs:
 
 ```
-Scope '.default' not found on resource 8d73a1f1-...
+Scope '.default' not found on resource <backend-appId>
 ```
 
 ### Workaround we applied
@@ -315,7 +315,7 @@ What `P` means is undocumented (Production vs Preview? Public vs Private?).
 Both block name reuse on a re-registration. Failed registration #4 exhibited:
 
 ```
-Failed to create connector shared_ext_ServiceNowMCPP for environment 242b55fb-...
+Failed to create connector shared_ext_ServiceNowMCPP for environment <compliant-container-env-id>
 Status: BadRequest, Error: HTTP 400: Bad Request
 ```
 
@@ -431,7 +431,7 @@ After completing the full registration + admin approval flow successfully:
 
 - ✅ All 4 Entra apps exist with correct `requiredResourceAccess` chain.
 - ✅ Both Power Platform connectors (`ext_SnowCat`, `ext_SnowCatP`) created in
-  the `Microsoft 365 Compliant Container` system env (`242b55fb-...`).
+  the `Microsoft 365 Compliant Container` system env (`<compliant-container-env-id>`).
 - ✅ Tenant-wide admin consent granted for `PlatformRuntime.Internal.All`
   (BYO → Agent 365 SP) and `access_as_user` (RemoteProxy → backend).
 - ✅ M365 admin center shows the request as **Available** / approved.
@@ -441,10 +441,10 @@ After completing the full registration + admin approval flow successfully:
   ```json
   {
     "mcpServerName": "ext_SnowCat",
-    "id": "2a88ff46-6550-f111-bec7-000d3ab80bec",
+    "id": "<server-entity-id>",
     "url": "https://agent365.svc.cloud.microsoft/agents/servers/ext_SnowCat",
     "scope": "Tools.ListInvoke.All",
-    "audience": "b06a3be0-5355-42b8-8cea-baa56db0edb7",
+    "audience": "<byo-appId>",
     "publisher": "<tenant-guid>"
   }
   ```
@@ -491,7 +491,7 @@ Microsoft built-in MCP connectors (`shared_a365copilotchatmcp`,
 |---|---|---|
 | `properties.metadata.source` | `marketplace` | `powerapps-user-defined` |
 | `properties.capabilities` | `["actions"]` | **`[]` (empty!)** |
-| `properties.publisher` | `Microsoft` | `MOD Administrator` (creator) |
+| `properties.publisher` | `Microsoft` | `<tenant maker display name>` (creator) |
 | `properties.tier` | `Premium` | `Standard` |
 | `properties.runtimeUrls` host | `*.common.europe002.azure-apihub.net` | `*.custom.europe002.azure-apihub.net` |
 | `properties.iconUri` | branded `static.powerapps.com/...` | default `defaulticons.powerapps.com/...` |
@@ -534,11 +534,11 @@ GET https://api.powerapps.com/providers/Microsoft.PowerApps/apis
 `CannotUpdateApiMetadata`), so we cannot fake the connectors as `marketplace`.
 That field is informational only — the real picker filter is `capabilities`.
 This is **confirmed**: after the PATCH the connector remains
-`metadata.source: powerapps-user-defined` and `publisher: MOD Administrator`
+`metadata.source: powerapps-user-defined` and `publisher: <tenant maker display name>`
 yet is now picker-visible.
 
 **Replication caveat:** the registration creates the canonical connector in the
-hidden `Microsoft 365 Compliant Container` system env (`242b55fb-...`, *not*
+hidden `Microsoft 365 Compliant Container` system env (`<compliant-container-env-id>`, *not*
 listed by `a365 develop-mcp list-environments` and *not* in the BAP admin env
 list) and then propagates two `shared_tc-ext-<name>-...` tenant-scoped replicas
 into a curated subset of envs (in this tenant: 7 of 14 envs got the
@@ -598,7 +598,7 @@ canonical is the only path; the platform's replication eventually copies
 
 ---
 
-## 12. BYO MCP does not deliver seamless SSO — every end user hits the OAuth popup
+## 12. BYO MCP ships an incomplete OBO setup — every end user hits the OAuth popup
 
 ### What happened
 
@@ -607,13 +607,23 @@ After completing the full registration + admin approval + visibility-fix
 Studio "Add a tool → Model Context Protocol" picker. However, **the BYO
 feature is implemented on top of the existing Power Platform custom connector
 model with OAuth 2.0**, and inspection of the resulting Entra app
-configuration shows that the registration flow **does not configure the
-preauthorization required for the documented "seamless OBO" experience**.
+configuration shows that the registration flow **implements only the
+connector-side half of the documented OBO recipe** and skips the entire
+Entra-side configuration that the same docs say is mandatory for silent SSO.
 
 The result: every end user of any Copilot Studio agent that uses the BYO MCP
 server has to go through the per-user OAuth consent / sign-in popup (the
 infamous "Open connection manager" UX) — exactly the friction MCS adopters
 expect MCP to *eliminate*.
+
+> **Note for the PM team:** for a fully-worked reference of what BYO
+> *should* be producing automatically, this same repo carries a hand-written
+> recipe at [docs/AUTH_ENTRA_OBO_OKTA.md](AUTH_ENTRA_OBO_OKTA.md) that walks
+> through the complete Entra app layout, scope, pre-authorizations, and
+> connector settings needed for silent SSO. Today, that doc exists because
+> BYO doesn't do any of it for you. The ideal future state is for that doc
+> to become obsolete because `a365 develop-mcp register-external-mcp-server`
+> already does all the same steps.
 
 ### Evidence (verified via Graph API on the live tenant)
 
@@ -688,13 +698,20 @@ path — but then doesn't actually complete the OBO setup.
 
 ### Suggested fix (low effort, high impact)
 
-During `a365 develop-mcp register-external-mcp-server`, after creating the
-A365Proxy app, the registration should also:
+The full manual recipe is documented by Microsoft in
+[Configure OBO authentication for custom connectors](https://learn.microsoft.com/microsoft-copilot-studio/advanced-custom-connector-on-behalf-of)
+and [Deploy Azure MCP Server with on-behalf-of authentication](https://learn.microsoft.com/azure/developer/azure-mcp-server/how-to/deploy-remote-mcp-server-on-behalf-of).
+The BYO registration must execute the same Entra-side steps. Concretely,
+during `a365 develop-mcp register-external-mcp-server`, after creating the
+A365Proxy and BYO apps, the registration should also perform **all four**
+of the following PATCHes:
 
-1. **Expose a scope on the A365Proxy app**, e.g. `access_as_user`
-   (`oauth2PermissionScopes` entry).
+1. **Expose a scope on the A365Proxy (connector) app**, e.g.
+   `access_as_user` (`oauth2PermissionScopes` entry). Without this, there
+   is nothing to preauthorize against — step 2 has no scope to grant.
 2. **Add the Azure API Connections SP as a preauthorized client** on
-   A365Proxy with that scope:
+   A365Proxy with the new scope (this is the connector→runtime OBO hop
+   the Power Platform documentation calls out explicitly):
 
    ```http
    PATCH https://graph.microsoft.com/v1.0/applications/{a365proxy-objectId}
@@ -702,23 +719,45 @@ A365Proxy app, the registration should also:
 
    {
      "api": {
-       "preAuthorizedApplications": [
-         {
-           "appId": "fe053c5f-3692-4f14-aef2-ee34fc081cae",
-           "delegatedPermissionIds": ["<id-of-access_as_user-scope>"]
-         }
-       ]
+       "oauth2PermissionScopes": [{
+         "id": "<new-guid>", "value": "access_as_user",
+         "type": "User", "isEnabled": true,
+         "adminConsentDisplayName": "...", "adminConsentDescription": "...",
+         "userConsentDisplayName": "...", "userConsentDescription": "..."
+       }],
+       "preAuthorizedApplications": [{
+         "appId": "fe053c5f-3692-4f14-aef2-ee34fc081cae",
+         "delegatedPermissionIds": ["<id-of-access_as_user>"]
+       }]
      }
    }
    ```
-3. **Add the A365Proxy app as a preauthorized client on the BYO service app**
-   for the `Tools.ListInvoke.All` scope, so the second hop of the OBO chain
-   (connector → backend) also doesn't prompt.
+3. **Add the A365Proxy app as a preauthorized client on the BYO service
+   app** for the `Tools.ListInvoke.All` scope, so the second hop
+   (connector→backend) also doesn't prompt.
+4. **Add the first-party hosts as preauthorized clients on the BYO
+   service app** for the same scope, so users invoking the agent from
+   Teams or Microsoft 365 Copilot get a true silent token-passthrough
+   without ever touching the Power Platform connection flow:
 
-With these three additions, the end-user experience for *any* user
-authorised to use the agent becomes: open the agent → ask a question that
-triggers the tool → answer is returned. No popups, no per-user
-connection record, no "Open connection manager" detour.
+   | First-party host | App ID to add as `preAuthorizedApplications[].appId` |
+   |---|---|
+   | Power Apps / Copilot Studio | `7df0a125-d3be-4c96-aa54-591f83ff541c` |
+   | Microsoft Teams desktop/web | `1fec8e78-bce4-4aaf-ab1b-5451cc387264` and `5e3ce6c0-2b1f-4285-8d4b-75ee78787346` |
+   | Microsoft 365 Copilot | `ab9b8c07-8f02-4f72-87fa-80105867a763` |
+
+With these four PATCHes the end-user experience for *any* user authorized
+to use the agent becomes: open the agent → ask a question that triggers
+the tool → answer is returned. No popups, no per-user connection record,
+no "Open connection manager" detour, no agent-side Teams manifest tweaks
+beyond what the agent already needs for its own host SSO.
+
+Note: this is the exact same set of steps the in-repo
+[AUTH_ENTRA_OBO_OKTA.md](AUTH_ENTRA_OBO_OKTA.md) recipe walks a developer
+through manually today. Folding them into the registration tool is the
+difference between BYO being a viable production feature and BYO being a
+demo-only capability that every customer has to manually fix after the
+tool tells them "success".
 
 ### Why this is a Blocker, not a Medium
 
