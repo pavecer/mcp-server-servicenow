@@ -156,6 +156,40 @@ describe("buildOrderFormAdaptiveCard", () => {
 
     expect(input?.value).toBe("Headquarters");
   });
+
+  it("skips ServiceNow UI macros (friendly_type = 'macro') instead of emitting a stub input", () => {
+    // Mirrors Retire Change Template's `button_renderer` variable on
+    // dev310193: friendly_type "macro" / display_type "Custom" / no label.
+    // Such variables only render in the native ServiceNow form and have no
+    // meaningful Adaptive Card analog.
+    const item: ServiceNowCatalogItemDetail = {
+      sys_id: "macro-test",
+      name: "Item with a macro",
+      variables: [
+        {
+          name: "button_renderer",
+          label: "",
+          type: 14 as unknown as string,
+          friendly_type: "macro",
+          display_type: "Custom"
+        },
+        {
+          name: "justification",
+          label: "Justification",
+          type: 2 as unknown as string,
+          mandatory: true
+        }
+      ]
+    };
+
+    const card = buildOrderFormAdaptiveCard(item);
+    const body = card.body as Array<Record<string, unknown>>;
+
+    // The macro renderer must not appear as an input.
+    expect(body.find(b => b.id === "button_renderer")).toBeUndefined();
+    // The real input is still emitted.
+    expect(body.find(b => b.id === "justification")).toBeDefined();
+  });
 });
 
 describe("buildOrderConfirmationAdaptiveCard", () => {

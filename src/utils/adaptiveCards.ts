@@ -329,6 +329,22 @@ function isContainerEndType(type: string): boolean {
   return ["container_end", "end_split", "split_end"].includes(type);
 }
 
+/**
+ * ServiceNow renderer types that have no meaningful Adaptive Card analog
+ * (UI macros, custom buttons, server-side scripts, attachments handled by
+ * the native form). Returning true here causes buildVariableInput to skip
+ * the variable entirely instead of emitting a stub Input.Text.
+ */
+function isUnsupportedRendererType(type: string): boolean {
+  return [
+    "macro",
+    "ui_macro",
+    "macro_with_label",
+    "custom",
+    "break"
+  ].includes(type);
+}
+
 function isMultilineType(type: string, variable: ServiceNowVariable): boolean {
   if (["2", "textarea", "multi_line", "multiline", "multi_line_text"].includes(type)) {
     return true;
@@ -517,7 +533,7 @@ function buildVariableInput(
   const label = normalizedLabel + (variable.mandatory ? " *" : "");
   const required = variable.mandatory ?? false;
 
-  if (variable.visible === false || isContainerEndType(type)) {
+  if (variable.visible === false || isContainerEndType(type) || isUnsupportedRendererType(type)) {
     return null;
   }
 
