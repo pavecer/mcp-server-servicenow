@@ -1,8 +1,15 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { ServiceNowClient } from "../services/servicenowClient";
-import { buildOrderFormAdaptiveCard } from "../utils/adaptiveCards";
+import {
+  buildOrderFormAdaptiveCard,
+  collectVariables,
+  getReferenceQualifier,
+  getReferenceTable,
+  isReferenceVariable
+} from "../utils/adaptiveCards";
 import { computePrefillValues } from "../utils/prefillCatalogForm";
+import Logger from "../utils/logger";
 
 export function registerGetCatalogItemFormTool(server: McpServer, client: ServiceNowClient): void {
   const sysIdPattern = /^[0-9a-f]{32}$/i;
@@ -70,7 +77,54 @@ export function registerGetCatalogItemFormTool(server: McpServer, client: Servic
         { userContext, prefillHints }
       );
 
-      const adaptiveCard = buildOrderFormAdaptiveCard(item, prefilledValues);
+      // Pre-resolve reference variables (e.g. `requested_for` -> sys_user,
+      // `internal_destination` -> cmn_location) so the Adaptive Card can
+      // render them as ChoiceSets the user can pick from. Each lookup is
+      // bounded and any single failure falls back to a free-text input, so
+      // a flaky reference table never breaks the whole form.
+      const referenceVariables = collectVariables(item.variables).filter(
+        v => isReferenceVariable(v) && v.visible !== false && getReferenceTable(v)
+      );
+      const referenceChoices: Record<string, Array<{ title: string; value: string }>> = {};
+      const referenceDiagnostics: Record<string, { table: string; count: number; refQualifier?: string }> = {};
+
+      if (referenceVariables.length > 0) {
+        const lookups = await Promise.all(
+          referenceVariables.map(async variable => {
+            const table = getReferenceTable(variable);
+            const refQualifier = getReferenceQualifier(variable);
+            try {
+              const records = await client.searchReferenceRecords(table, {
+                refQualifier: refQualifier || undefined,
+                limit: 25
+              });
+              return { variable, table, refQualifier, records };
+            } catch (error) {
+              Logger.warn("Reference variable lookup failed", {
+                operation: "catalog.reference_lookup_failed",
+                variableName: variable.name,
+                table
+              }, error);
+              return { variable, table, refQualifier, records: [] };
+            }
+          })
+        );
+
+        for (const { variable, table, refQualifier, records } of lookups) {
+          if (records.length === 0) continue;
+          referenceChoices[variable.name] = records.map(record => ({
+            title: record.display,
+            value: record.sys_id
+          }));
+          referenceDiagnostics[variable.name] = {
+            table,
+            count: records.length,
+            ...(refQualifier ? { refQualifier } : {})
+          };
+        }
+      }
+
+      const adaptiveCard = buildOrderFormAdaptiveCard(item, prefilledValues, referenceChoices);
 
       return {
         content: [
@@ -82,6 +136,7 @@ export function registerGetCatalogItemFormTool(server: McpServer, client: Servic
               variableCount: item.variables?.length ?? 0,
               prefilledValues,
               prefillDiagnostics,
+              referenceLookups: referenceDiagnostics,
               adaptiveCard
             }, null, 2)
           }

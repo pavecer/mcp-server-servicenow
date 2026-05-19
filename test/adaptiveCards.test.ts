@@ -190,6 +190,91 @@ describe("buildOrderFormAdaptiveCard", () => {
     // The real input is still emitted.
     expect(body.find(b => b.id === "justification")).toBeDefined();
   });
+
+  it("renders ServiceNow email fields (type 26) as Input.Text with style 'Email'", () => {
+    // Mirrors the Email Alias catalog item on dev310193: numeric type 26
+    // with friendly_type "email". Adaptive Cards 1.5 surfaces this as
+    // style="Email" so mobile clients can render the email keyboard.
+    const item: ServiceNowCatalogItemDetail = {
+      sys_id: "email-test",
+      name: "Email Alias",
+      variables: [
+        {
+          name: "primary_email",
+          label: "Primary email",
+          type: 26 as unknown as string,
+          friendly_type: "email",
+          mandatory: true
+        }
+      ]
+    };
+
+    const card = buildOrderFormAdaptiveCard(item);
+    const body = card.body as Array<Record<string, unknown>>;
+    const input = body.find(b => b.id === "primary_email") as Record<string, unknown>;
+
+    expect(input?.type).toBe("Input.Text");
+    expect(input?.style).toBe("Email");
+    expect(input?.isRequired).toBe(true);
+  });
+
+  it("renders a reference variable as Input.ChoiceSet when referenceChoices are provided", () => {
+    // Mirrors the Packaging & Shipping catalog item on dev310193:
+    // `internal_destination` is a reference to cmn_location. With the
+    // orchestration layer pre-resolving candidate records, the card
+    // becomes a picker rather than a free-text input.
+    const item: ServiceNowCatalogItemDetail = {
+      sys_id: "ref-test",
+      name: "Packaging & Shipping",
+      variables: [
+        {
+          name: "internal_destination",
+          label: "Internal destination",
+          type: 18 as unknown as string,
+          friendly_type: "reference",
+          reference: "cmn_location"
+        }
+      ]
+    };
+    const referenceChoices = {
+      internal_destination: [
+        { title: "Headquarters", value: "0000000000000000000000000000aaaa" },
+        { title: "Remote Office", value: "0000000000000000000000000000bbbb" }
+      ]
+    };
+
+    const card = buildOrderFormAdaptiveCard(item, undefined, referenceChoices);
+    const body = card.body as Array<Record<string, unknown>>;
+    const input = body.find(b => b.id === "internal_destination") as Record<string, unknown>;
+
+    expect(input?.type).toBe("Input.ChoiceSet");
+    expect(input?.choices).toEqual(referenceChoices.internal_destination);
+    expect(input?.style).toBe("compact");
+  });
+
+  it("falls back to a free-text Input.Text for reference variables when no choices are resolved", () => {
+    // Lookup failure shouldn't break the form: the user can still type a
+    // sys_id (or be helped by the agent in conversation).
+    const item: ServiceNowCatalogItemDetail = {
+      sys_id: "ref-fallback-test",
+      name: "Item with unresolved reference",
+      variables: [
+        {
+          name: "requested_for",
+          label: "Requested for",
+          type: 18 as unknown as string,
+          friendly_type: "reference",
+          reference: "sys_user"
+        }
+      ]
+    };
+
+    const card = buildOrderFormAdaptiveCard(item);
+    const body = card.body as Array<Record<string, unknown>>;
+    const input = body.find(b => b.id === "requested_for") as Record<string, unknown>;
+
+    expect(input?.type).toBe("Input.Text");
+  });
 });
 
 describe("buildOrderConfirmationAdaptiveCard", () => {

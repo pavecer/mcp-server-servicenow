@@ -345,6 +345,46 @@ function isUnsupportedRendererType(type: string): boolean {
   ].includes(type);
 }
 
+/**
+ * True when the variable points at another ServiceNow table (lookup /
+ * reference field). Detected via either a non-empty `reference` slot on
+ * the variable definition, or a friendly_type/canonical type that signals
+ * a reference picker. Distinct from "choice" fields, which carry their
+ * own static option list.
+ */
+export function isReferenceVariable(variable: ServiceNowVariable): boolean {
+  if (typeof variable.reference === "string" && variable.reference.trim().length > 0) {
+    return true;
+  }
+  const type = normalizeVariableType(variable);
+  return ["reference", "lookup_unique_value"].includes(type);
+}
+
+/**
+ * Returns the ServiceNow table name a reference variable points at, or
+ * the empty string when the variable is not a reference.
+ */
+export function getReferenceTable(variable: ServiceNowVariable): string {
+  if (typeof variable.reference === "string") {
+    return variable.reference.trim();
+  }
+  return "";
+}
+
+/**
+ * Returns the encoded ServiceNow query carried alongside a reference
+ * variable (e.g. `"retired=false^EQ"`), or empty when none is set.
+ */
+export function getReferenceQualifier(variable: ServiceNowVariable): string {
+  if (typeof variable.ref_qualifier === "string") {
+    return variable.ref_qualifier.trim();
+  }
+  if (typeof variable.reference_qual === "string") {
+    return variable.reference_qual.trim();
+  }
+  return "";
+}
+
 function isMultilineType(type: string, variable: ServiceNowVariable): boolean {
   if (["2", "textarea", "multi_line", "multiline", "multi_line_text"].includes(type)) {
     return true;
@@ -515,7 +555,8 @@ export function buildCatalogItemSelectionAdaptiveCard(
  */
 function buildVariableInput(
   variable: ServiceNowVariable,
-  prefilledValues?: Record<string, string | number | boolean>
+  prefilledValues?: Record<string, string | number | boolean>,
+  referenceChoices?: Record<string, Array<{ title: string; value: string }>>
 ): Record<string, unknown> | null {
   const baseType = normalizeVariableType(variable);
   // ServiceNow's friendly_type often misreports date/date-time variables as
@@ -535,6 +576,27 @@ function buildVariableInput(
 
   if (variable.visible === false || isContainerEndType(type) || isUnsupportedRendererType(type)) {
     return null;
+  }
+
+  // Reference field. When the orchestration layer has pre-resolved a list
+  // of candidate records from the referenced ServiceNow table, render a
+  // ChoiceSet so the user picks an existing record (submit value = sys_id).
+  // Falls through to the default Input.Text when no choices were resolved,
+  // so the form remains usable even if the lookup endpoint failed.
+  if (isReferenceVariable(variable)) {
+    const resolvedChoices = referenceChoices?.[variable.name];
+    if (resolvedChoices && resolvedChoices.length > 0) {
+      return {
+        type: "Input.ChoiceSet",
+        id: variable.name,
+        label,
+        placeholder: buildChoicePlaceholder(normalizedLabel, normalizedInstructions),
+        value: defaultValue,
+        choices: resolvedChoices,
+        style: "compact",
+        isRequired: required
+      };
+    }
   }
 
   if (["checkbox_container", "container_start"].includes(type)) {
@@ -641,6 +703,20 @@ function buildVariableInput(
     };
   }
 
+  // Email field. ServiceNow exposes these as numeric type 26 (with
+  // friendly_type "email") or as a friendly_type/display_type literal "email".
+  if (["26", "email"].includes(type)) {
+    return {
+      type: "Input.Text",
+      id: variable.name,
+      label,
+      placeholder: normalizedInstructions || `Enter ${normalizedLabel}`,
+      value: defaultValue,
+      style: "Email",
+      isRequired: required
+    };
+  }
+
   // Default: single-line text (covers type 1, 7, and any unknown)
   return {
     type: "Input.Text",
@@ -663,7 +739,8 @@ function buildVariableInput(
  */
 export function buildOrderFormAdaptiveCard(
   item: ServiceNowCatalogItemDetail,
-  prefilledValues?: Record<string, string | number | boolean>
+  prefilledValues?: Record<string, string | number | boolean>,
+  referenceChoices?: Record<string, Array<{ title: string; value: string }>>
 ): Record<string, unknown> {
   const shortDescription = toAdaptiveText(item.short_description);
   const description = toAdaptiveText(item.description);
@@ -722,7 +799,7 @@ export function buildOrderFormAdaptiveCard(
     });
 
     for (const variable of variables) {
-      const input = buildVariableInput(variable, effectivePrefill);
+      const input = buildVariableInput(variable, effectivePrefill, referenceChoices);
       if (input) {
         body.push(input);
       }

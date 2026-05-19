@@ -484,6 +484,83 @@ export class ServiceNowClient {
     }
   }
 
+  /**
+   * Fetch candidate records for a ServiceNow reference variable so the
+   * Adaptive Card can render them as a ChoiceSet rather than a free-text
+   * input. Returns at most `limit` rows.
+   *
+   *   table:        the referenced ServiceNow table (e.g. "sys_user",
+   *                 "cmn_location", "std_change_record_producer").
+   *   refQualifier: optional encoded query carried from the catalog variable
+   *                 (e.g. "retired=false^EQ"). Applied verbatim.
+   *   query:        optional sysparm_text-style filter for the user's
+   *                 in-progress search (currently unused on first render).
+   *   limit:        max records to return; defaults to 25.
+   */
+  async searchReferenceRecords(
+    table: string,
+    options: { refQualifier?: string; query?: string; limit?: number } = {}
+  ): Promise<Array<{ sys_id: string; display: string }>> {
+    const sanitizedTable = table.trim().toLowerCase();
+    if (!/^[a-z0-9_]+$/i.test(sanitizedTable)) {
+      throw new Error(`Invalid ServiceNow reference table name: '${table}'`);
+    }
+
+    const client = await this.getClient();
+    const limit = Math.max(1, Math.min(options.limit ?? 25, 100));
+
+    // Pull a small set of likely display columns. Different tables use
+    // different display fields (sys_user uses "name", cmn_location uses
+    // "name", std_change_record_producer uses "short_description", etc.).
+    // We over-fetch a few candidate fields and pick the best one per row.
+    const params: Record<string, string | number> = {
+      sysparm_limit: limit,
+      sysparm_fields: "sys_id,name,short_description,email,number,title",
+      sysparm_display_value: "true"
+    };
+
+    const queryFragments: string[] = [];
+    if (options.refQualifier && options.refQualifier.trim()) {
+      queryFragments.push(options.refQualifier.trim());
+    }
+    if (options.query && options.query.trim()) {
+      // Restrict to "name LIKE <q> OR short_description LIKE <q>" so callers
+      // can prefilter by user text without needing to know the display field.
+      const safe = options.query.trim().replace(/\^/g, " ");
+      queryFragments.push(`nameLIKE${safe}^ORshort_descriptionLIKE${safe}`);
+    }
+    if (queryFragments.length > 0) {
+      params.sysparm_query = queryFragments.join("^");
+    }
+
+    try {
+      const response = await client.get<{ result: Array<Record<string, unknown>> }>(
+        `/api/now/table/${sanitizedTable}`,
+        { params }
+      );
+      const rows = response.data.result ?? [];
+      return rows
+        .map(row => {
+          const sysId = typeof row.sys_id === "string" ? row.sys_id : "";
+          const display =
+            (typeof row.name === "string" && row.name.trim()) ||
+            (typeof row.short_description === "string" && row.short_description.trim()) ||
+            (typeof row.title === "string" && row.title.trim()) ||
+            (typeof row.email === "string" && row.email.trim()) ||
+            (typeof row.number === "string" && row.number.trim()) ||
+            sysId;
+          return { sys_id: sysId, display: String(display) };
+        })
+        .filter(row => row.sys_id);
+    } catch (error) {
+      Logger.warn("Reference table lookup failed; falling back to free-text input", {
+        operation: "catalog.reference_lookup_failed",
+        table: sanitizedTable
+      });
+      return [];
+    }
+  }
+
   async placeOrder(itemSysId: string, input: PlaceOrderInput): Promise<ServiceNowPlaceOrderResponse> {
     try {
       const client = await this.getClient();

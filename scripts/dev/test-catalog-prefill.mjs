@@ -105,7 +105,13 @@ const { TokenManager } = await import(
 const { computePrefillValues } = await import(
   url.pathToFileURL(path.join(distRoot, "utils", "prefillCatalogForm.js"))
 );
-const { buildOrderFormAdaptiveCard } = await import(
+const {
+  buildOrderFormAdaptiveCard,
+  collectVariables,
+  isReferenceVariable,
+  getReferenceTable,
+  getReferenceQualifier
+} = await import(
   url.pathToFileURL(path.join(distRoot, "utils", "adaptiveCards.js"))
 );
 
@@ -273,6 +279,46 @@ try {
   console.log(JSON.stringify((item.variables ?? []).map(summarizeVariable), null, 2));
   console.log("");
 
+  // Pre-resolve reference variables exactly like getCatalogItemForm.ts does
+  // in production, so the probe surfaces the same Input.ChoiceSet output the
+  // agent would emit.
+  const referenceVariables = collectVariables(item.variables).filter(
+    v => isReferenceVariable(v) && v.visible !== false && getReferenceTable(v)
+  );
+  const referenceChoices = {};
+  const referenceDiagnostics = {};
+  if (referenceVariables.length > 0) {
+    const lookups = await Promise.all(
+      referenceVariables.map(async variable => {
+        const table = getReferenceTable(variable);
+        const refQualifier = getReferenceQualifier(variable);
+        try {
+          const records = await client.searchReferenceRecords(table, {
+            refQualifier: refQualifier || undefined,
+            limit: 10
+          });
+          return { variable, table, refQualifier, records };
+        } catch (err) {
+          return { variable, table, refQualifier, records: [], error: err?.message };
+        }
+      })
+    );
+    for (const { variable, table, refQualifier, records, error } of lookups) {
+      if (records.length > 0) {
+        referenceChoices[variable.name] = records.map(r => ({ title: r.display, value: r.sys_id }));
+      }
+      referenceDiagnostics[variable.name] = {
+        table,
+        refQualifier: refQualifier || undefined,
+        count: records.length,
+        error
+      };
+    }
+    console.log("Reference lookup results (orchestrated):");
+    console.log(JSON.stringify(referenceDiagnostics, null, 2));
+    console.log("");
+  }
+
   for (const name of order) {
     const scenario = SCENARIOS[name];
     console.log(hr("="));
@@ -291,13 +337,15 @@ try {
     console.log(JSON.stringify(diagnostics, null, 2));
     console.log("");
 
-    const card = buildOrderFormAdaptiveCard(item, values);
+    const card = buildOrderFormAdaptiveCard(item, values, referenceChoices);
     const inputs = (card.body ?? [])
       .filter(b => typeof b.id === "string")
       .map(b => ({
         id: b.id,
         type: b.type,
         value: b.value,
+        style: b.style,
+        choicesCount: Array.isArray(b.choices) ? b.choices.length : undefined,
         prefilled: Object.prototype.hasOwnProperty.call(values, b.id)
       }));
     console.log("Adaptive Card inputs after prefill:");
