@@ -109,6 +109,53 @@ describe("buildOrderFormAdaptiveCard", () => {
       data: { action: "place_order", itemSysId: "item3" }
     });
   });
+
+  it("does not leak unevaluated GlideScript default values into the rendered input", () => {
+    const item: ServiceNowCatalogItemDetail = {
+      sys_id: "item-glide",
+      name: "GlideScript default",
+      variables: [
+        {
+          name: "requested_for",
+          label: "Requested for",
+          type: "31",
+          mandatory: true,
+          default_value: "javascript:gs.getUserID();"
+        }
+      ]
+    };
+
+    const card = buildOrderFormAdaptiveCard(item);
+    const body = card.body as Array<Record<string, unknown>>;
+    const input = body.find(b => b.id === "requested_for") as Record<string, unknown>;
+
+    expect(input).toBeDefined();
+    // The literal "javascript:..." snippet must never reach the rendered Adaptive Card.
+    expect(input.value).not.toBe("javascript:gs.getUserID();");
+    expect(typeof input.value === "string" ? (input.value as string) : "").not.toMatch(/^javascript:/i);
+    expect(JSON.stringify(card)).not.toContain("javascript:");
+  });
+
+  it("preserves a legitimate string default value when it is not GlideScript", () => {
+    const item: ServiceNowCatalogItemDetail = {
+      sys_id: "item-default",
+      name: "Real default",
+      variables: [
+        {
+          name: "location",
+          label: "Location",
+          type: "1",
+          default_value: "Headquarters"
+        }
+      ]
+    };
+
+    const card = buildOrderFormAdaptiveCard(item);
+    const body = card.body as Array<Record<string, unknown>>;
+    const input = body.find(b => b.id === "location") as Record<string, unknown>;
+
+    expect(input?.value).toBe("Headquarters");
+  });
 });
 
 describe("buildOrderConfirmationAdaptiveCard", () => {

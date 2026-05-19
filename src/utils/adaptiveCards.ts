@@ -113,13 +113,19 @@ function getVariableInstructions(variable: ServiceNowVariable): string {
 }
 
 function getVariableDefaultValue(variable: ServiceNowVariable): string {
-  return (
-    readStringFromCandidate(
-      variable,
-      ["default_value", "defaultValue", "value", "display_value", "displayValue"]
-    )
-    ?? ""
-  );
+  const raw = readStringFromCandidate(
+    variable,
+    ["default_value", "defaultValue", "value", "display_value", "displayValue"]
+  ) ?? "";
+
+  // Filter out unevaluated ServiceNow GlideScript snippets (e.g. "javascript:gs.getUserID();").
+  // These are server-side expressions intended to be evaluated by ServiceNow before reaching a
+  // client; surfacing the raw script as a form value would expose literal JavaScript to the user.
+  if (/^\s*javascript\s*:/i.test(raw)) {
+    return "";
+  }
+
+  return raw;
 }
 
 function parseChoiceString(rawChoices: string): Array<{ title: string; value: string }> {
