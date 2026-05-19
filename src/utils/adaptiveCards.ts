@@ -192,6 +192,39 @@ export function normalizeVariableType(variable: ServiceNowVariable): string {
   return "1";
 }
 
+/**
+ * The dev310193 demo instance (and likely many real instances) often reports
+ * date and date/time variables with the misleading combination
+ * `type: 6` + `friendly_type: "single_line_text"`. This helper recognizes
+ * when a variable is *probably* a date field even though `normalizeVariableType`
+ * would otherwise classify it as plain text. We only override when both the
+ * numeric type AND the label look date-shaped, to avoid mistaking labels like
+ * "What software do you need installed ?" (also `type: 6` on dev310193) for
+ * dates.
+ */
+function isLikelyDateField(variable: ServiceNowVariable): "date" | "datetime" | undefined {
+  const numericType = typeof variable.type === "number"
+    ? variable.type
+    : Number(typeof variable.type === "string" ? variable.type : NaN);
+
+  if (numericType !== 6 && numericType !== 8) {
+    return undefined;
+  }
+
+  const label = String(
+    readStringFromCandidate(variable, ["label", "question_text", "questionText", "title", "text", "name"]) ?? ""
+  ).toLowerCase();
+
+  // Date-bearing labels. Restricted to unambiguous date markers - we don't
+  // include "need" / "by" / "required" because labels like "What software do
+  // you need installed ?" or "Approved by" would otherwise be misclassified.
+  if (/\b(date|deadline|when|schedule|due|expires?|expiry|effective\s+date|delivery\s+date|start\s+date|end\s+date)\b/.test(label)) {
+    return numericType === 6 ? "datetime" : "date";
+  }
+
+  return undefined;
+}
+
 export function normalizeChoices(variable: ServiceNowVariable): Array<{ title: string; value: string }> {
   const rawChoices = getRawChoices(variable);
   if (!rawChoices) {
@@ -468,7 +501,12 @@ function buildVariableInput(
   variable: ServiceNowVariable,
   prefilledValues?: Record<string, string | number | boolean>
 ): Record<string, unknown> | null {
-  const type = normalizeVariableType(variable);
+  const baseType = normalizeVariableType(variable);
+  // ServiceNow's friendly_type often misreports date/date-time variables as
+  // "single_line_text". When the numeric type AND label both look date-shaped,
+  // promote the variable so the Adaptive Card builder renders Input.Date.
+  const dateOverride = isLikelyDateField(variable);
+  const type = dateOverride ?? baseType;
   const choices = normalizeChoices(variable);
   const normalizedLabel = getVariableLabel(variable);
   const normalizedInstructions = getVariableInstructions(variable);
