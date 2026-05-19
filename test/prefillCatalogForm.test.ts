@@ -325,6 +325,97 @@ describe("computePrefillValues (iPhone scenario)", () => {
       is_this_a_replacement_for_a_lost_or_broken_iphone: "Yes"
     });
   });
+
+  // -------------------------------------------------------------------------
+  // Regression coverage for the real "Sales Laptop" demo item shape
+  // (sys_id e212a942c0a80165008313c59764eea1 on dev310193). This item has
+  // a NESTED "Optional Software" container wrapping per-app boolean
+  // toggles (powerpoint / acrobat / photoshop / siebel) plus a free-text
+  // "Additional software requirements". Exercises:
+  //   - collectVariables() walking nested children
+  //   - hint_exact_name path for boolean toggles
+  //   - context_boolean fallback for the un-hinted Siebel toggle when the
+  //     user context contains a negative phrase referring to it
+  //   - hint passthrough into a multi-line text field
+  // -------------------------------------------------------------------------
+  function salesLaptopDemoItem(): ServiceNowCatalogItemDetail {
+    return {
+      sys_id: "sales_laptop",
+      name: "Sales Laptop",
+      variables: [
+        {
+          name: "optional_label",
+          label: "Optional Software",
+          type: "0",
+          variables: [
+            { name: "powerpoint", label: "Microsoft Powerpoint", type: "7" },
+            { name: "acrobat", label: "Adobe Acrobat", type: "7" },
+            { name: "photoshop", label: "Adobe Photoshop", type: "7" },
+            { name: "siebel", label: "Siebel Client", type: "7" }
+          ]
+        },
+        {
+          name: "software_requirements",
+          label: "Additional software requirements",
+          type: "2"
+        }
+      ]
+    };
+  }
+
+  it("prefills nested boolean toggles via exact-name hints (PowerPoint, Acrobat, Photoshop)", () => {
+    const item = salesLaptopDemoItem();
+    const { values, diagnostics } = computePrefillValues(item.variables, {
+      prefillHints: { powerpoint: true, acrobat: true, photoshop: true }
+    });
+    expect(values).toMatchObject({
+      powerpoint: true,
+      acrobat: true,
+      photoshop: true
+    });
+    expect(diagnostics.find(d => d.variableName === "powerpoint")?.source).toBe("hint_exact_name");
+  });
+
+  it("infers an un-hinted toggle to FALSE from a negative phrase in userContext (Siebel)", () => {
+    const item = salesLaptopDemoItem();
+    const { values, diagnostics } = computePrefillValues(item.variables, {
+      userContext:
+        "Joining sales next week, please install PowerPoint and Acrobat. No Siebel needed.",
+      prefillHints: { powerpoint: true, acrobat: true }
+    });
+    expect(values.siebel).toBe(false);
+    expect(diagnostics.find(d => d.variableName === "siebel")?.source).toBe("context_boolean");
+  });
+
+  it("passes a free-text software_requirements hint straight into the multi-line field", () => {
+    const item = salesLaptopDemoItem();
+    const requirements = "Please also install Siebel CRM client and Slack desktop app";
+    const { values } = computePrefillValues(item.variables, {
+      prefillHints: { software_requirements: requirements }
+    });
+    expect(values.software_requirements).toBe(requirements);
+  });
+
+  it("real-world combined Sales Laptop scenario fills all five fields", () => {
+    const item = salesLaptopDemoItem();
+    const { values } = computePrefillValues(item.variables, {
+      userContext:
+        "Joining the sales team next week and need a laptop. Please install PowerPoint and Adobe Acrobat. Also Photoshop would be useful for marketing decks. No Siebel needed.",
+      prefillHints: {
+        powerpoint: true,
+        acrobat: true,
+        photoshop: true,
+        software_requirements: "Please also install Siebel CRM client and Slack desktop app"
+      }
+    });
+    expect(values).toEqual({
+      powerpoint: true,
+      acrobat: true,
+      photoshop: true,
+      siebel: false,
+      software_requirements: "Please also install Siebel CRM client and Slack desktop app"
+    });
+  });
 });
 
 describe("buildOrderFormAdaptiveCard with prefilledValues", () => {

@@ -1,26 +1,35 @@
 #!/usr/bin/env node
 /**
- * Apple iPhone smart-prefill probe.
+ * Generic catalog-item smart-prefill probe.
  *
- * 1. Fetches the real ServiceNow catalog item form (default sys_id is the
- *    "Apple iPhone 7" demo item on https://dev310193.service-now.com).
- * 2. Runs the prefill engine against a few representative user contexts
- *    (free-text only, structured hints only, both combined).
- * 3. Prints variable inventory, prefilled values, diagnostics, and the
- *    final Adaptive Card so you can see exactly what the agent would
- *    return to the end user.
+ * 1. Fetches a real ServiceNow catalog item form (default sys_id is the
+ *    "Apple iPhone 13" demo item on https://dev310193.service-now.com).
+ * 2. Runs the prefill engine (src/utils/prefillCatalogForm.ts) against a
+ *    few representative user contexts (free-text only, structured hints
+ *    only, both combined) or against a custom scenario you supply.
+ * 3. Prints the (recursively-expanded) variable inventory, prefilled
+ *    values, diagnostics, and the final Adaptive Card so you can see
+ *    exactly what the agent would return to the end user.
  *
  * Usage:
  *   npm run build
- *   node scripts/dev/test-iphone-prefill.mjs                       # default sys_id
- *   node scripts/dev/test-iphone-prefill.mjs <itemSysId>
- *   node scripts/dev/test-iphone-prefill.mjs <itemSysId> --scenario=hints
+ *   node scripts/dev/test-catalog-prefill.mjs                       # default = iPhone 13
+ *   node scripts/dev/test-catalog-prefill.mjs <itemSysId>           # any catalog item
+ *   node scripts/dev/test-catalog-prefill.mjs <itemSysId> --scenario=hints
  *
- * Scenarios:
+ * Built-in scenarios (iPhone-flavored):
  *   context   Free-text userContext only (no structured hints).
  *   hints     Structured prefillHints only (highest confidence path).
  *   both      Both userContext AND prefillHints (typical agent flow).
- *   all       Run every scenario back-to-back. [default]
+ *   all       Run every built-in scenario back-to-back. [default]
+ *
+ * Custom scenario (works for ANY catalog item):
+ *   --hints='<json-object>'      OR  --hints-file=<path-to-json>
+ *   --context='<free text>'      OR  --context-file=<path-to-txt>
+ *   --scenario=custom            Run only the custom scenario
+ *
+ * Other flags:
+ *   --dump-card                  Include the full Adaptive Card JSON in output
  */
 
 import fs from "node:fs";
@@ -144,6 +153,58 @@ const order = scenarioName === "all"
   ? ["context", "hints", "both"]
   : [scenarioName];
 
+// Custom scenario via CLI flags --hints='<json>' and/or --context='<text>'.
+// (PowerShell quoting is fiddly with JSON; use --hints-file=<path> as an
+// alternative that reads the JSON from a file.)
+// When either signal is provided, an additional "custom" scenario is
+// registered and run AFTER the built-ins (or alone when --scenario=custom).
+if (flags.hints || flags["hints-file"] || flags.context || flags["context-file"]) {
+  let parsedHints;
+  let hintsSource = flags.hints;
+  if (flags["hints-file"]) {
+    try {
+      hintsSource = fs.readFileSync(flags["hints-file"], "utf8");
+    } catch (err) {
+      console.error(`[error] --hints-file could not be read: ${err.message}`);
+      process.exit(1);
+    }
+  }
+  if (hintsSource) {
+    try {
+      parsedHints = JSON.parse(hintsSource);
+    } catch (err) {
+      console.error(`[error] hints JSON is invalid: ${err.message}`);
+      process.exit(1);
+    }
+    if (typeof parsedHints !== "object" || parsedHints === null || Array.isArray(parsedHints)) {
+      console.error("[error] hints must be a JSON object");
+      process.exit(1);
+    }
+  }
+  let contextValue = flags.context;
+  if (flags["context-file"]) {
+    try {
+      contextValue = fs.readFileSync(flags["context-file"], "utf8");
+    } catch (err) {
+      console.error(`[error] --context-file could not be read: ${err.message}`);
+      process.exit(1);
+    }
+  }
+  SCENARIOS.custom = {
+    label: "custom (--hints / --context)",
+    input: {
+      ...(contextValue ? { userContext: contextValue } : {}),
+      ...(parsedHints ? { prefillHints: parsedHints } : {})
+    }
+  };
+  if (scenarioName === "custom") {
+    order.length = 0;
+    order.push("custom");
+  } else if (scenarioName === "all") {
+    order.push("custom");
+  }
+}
+
 for (const name of order) {
   if (!SCENARIOS[name]) {
     console.error(`[error] Unknown scenario '${name}'. Use one of: ${Object.keys(SCENARIOS).join(", ")}, all`);
@@ -170,7 +231,8 @@ function summarizeVariable(v) {
         : (c?.label ?? c?.title ?? c?.value ?? "")
     ).filter(Boolean);
   }
-  return {
+
+  const summary = {
     name: v.name,
     label: v.label,
     type: v.type ?? v.question_type ?? v.ui_type,
@@ -179,6 +241,20 @@ function summarizeVariable(v) {
     readonly: v.readonly === true,
     choices: choices && choices.length > 0 ? choices : undefined
   };
+
+  // ServiceNow catalog items frequently expose containers/labels that wrap
+  // nested children (e.g. "Optional Software" container -> powerpoint /
+  // acrobat / siebel toggles). Recurse so the inventory shows what the
+  // engine actually sees.
+  for (const key of ["variables", "children", "questions", "fields"]) {
+    const nested = v[key];
+    if (Array.isArray(nested) && nested.length > 0) {
+      summary.children = nested.map(summarizeVariable);
+      break;
+    }
+  }
+
+  return summary;
 }
 
 try {
