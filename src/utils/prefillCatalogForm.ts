@@ -247,7 +247,11 @@ function classifyLabel(label: string): Set<string> {
     kinds.add("justification");
   }
   if (has("quantity", "qty", "count")) kinds.add("quantity");
-  if (has("date", "deadline", "needed", "required")) kinds.add("date");
+  // Date-bearing labels. "by" is intentionally excluded since "Approved by",
+  // "Created by", etc. would otherwise be misclassified as dates.
+  if (has("date", "deadline", "needed", "need", "required", "when", "schedule", "due")) {
+    kinds.add("date");
+  }
   if (has("location", "office", "site", "building", "shipping", "delivery")) {
     kinds.add("location");
   }
@@ -324,13 +328,132 @@ function extractQuantity(context: string): number | undefined {
   return undefined;
 }
 
-function extractDate(context: string): string | undefined {
-  // ISO yyyy-mm-dd anywhere in the context.
+function extractDate(context: string, now: Date = new Date()): string | undefined {
+  // Precedence is intentional: an *explicit* date (ISO, Month-Day-Year,
+  // numeric slash) is almost always the user's intended answer when both an
+  // explicit date and a relative phrase appear in the same sentence
+  // ("My laptop is in repair starting tomorrow, I need a loaner from
+  //  May 25th 2026" — they want May 25, not tomorrow).
+
+  // 1) ISO yyyy-mm-dd anywhere in the context (highest precedence).
   const iso = context.match(/\b(\d{4}-\d{2}-\d{2})\b/);
   if (iso) {
     return iso[1];
   }
+
+  // 2) "Month Day Year" and "Day Month Year" forms, e.g.
+  //    "May 25 2026", "May 25th, 2026", "25 May 2026", "25th May 2026".
+  const monthDayYear = context.match(
+    /\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2})(?:st|nd|rd|th)?(?:,)?\s+(\d{4})\b/i
+  );
+  if (monthDayYear) {
+    const formatted = buildIsoDate(Number(monthDayYear[3]), MONTHS.indexOf(monthDayYear[1].toLowerCase()), Number(monthDayYear[2]));
+    if (formatted) return formatted;
+  }
+  const dayMonthYear = context.match(
+    /\b(\d{1,2})(?:st|nd|rd|th)?\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})\b/i
+  );
+  if (dayMonthYear) {
+    const formatted = buildIsoDate(Number(dayMonthYear[3]), MONTHS.indexOf(dayMonthYear[2].toLowerCase()), Number(dayMonthYear[1]));
+    if (formatted) return formatted;
+  }
+
+  // 3) Slash-separated US/EU dates with a 4-digit year, e.g. "5/25/2026" or
+  //    "25/05/2026". Single 2-digit-year variants are skipped (too ambiguous).
+  const slashUs = context.match(/\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/);
+  if (slashUs) {
+    const a = Number(slashUs[1]);
+    const b = Number(slashUs[2]);
+    const year = Number(slashUs[3]);
+    // Prefer MM/DD/YYYY when the first number could be a month; otherwise treat as DD/MM/YYYY.
+    if (a >= 1 && a <= 12 && b >= 1 && b <= 31) {
+      const formatted = buildIsoDate(year, a - 1, b);
+      if (formatted) return formatted;
+    } else if (b >= 1 && b <= 12 && a >= 1 && a <= 31) {
+      const formatted = buildIsoDate(year, b - 1, a);
+      if (formatted) return formatted;
+    }
+  }
+
+  const lower = context.toLowerCase();
+
+  // 4) Relative day-words: today / tomorrow / yesterday.
+  if (/\b(today)\b/.test(lower)) {
+    return formatIsoDate(now);
+  }
+  if (/\btomorrow\b/.test(lower)) {
+    return formatIsoDate(addDays(now, 1));
+  }
+  if (/\byesterday\b/.test(lower)) {
+    return formatIsoDate(addDays(now, -1));
+  }
+
+  // 5) "in N day(s)/week(s)/month(s)" — bounded so we don't pick "in 2026 years".
+  const relMatch = lower.match(/\bin\s+(\d{1,3})\s+(day|days|week|weeks|month|months)\b/);
+  if (relMatch) {
+    const n = Number(relMatch[1]);
+    const unit = relMatch[2];
+    if (Number.isFinite(n) && n >= 0 && n < 365) {
+      if (unit.startsWith("day")) return formatIsoDate(addDays(now, n));
+      if (unit.startsWith("week")) return formatIsoDate(addDays(now, n * 7));
+      if (unit.startsWith("month")) return formatIsoDate(addMonths(now, n));
+    }
+  }
+
+  // 6) "next <weekday>" — picks the next occurrence after `now`.
+  const weekdayMatch = lower.match(/\bnext\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/);
+  if (weekdayMatch) {
+    const target = WEEKDAYS.indexOf(weekdayMatch[1]);
+    if (target >= 0) {
+      const offset = ((target - now.getDay() + 7) % 7) || 7;
+      return formatIsoDate(addDays(now, offset));
+    }
+  }
+
   return undefined;
+}
+
+const WEEKDAYS: readonly string[] = [
+  "sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"
+];
+const MONTHS: readonly string[] = [
+  "january", "february", "march", "april", "may", "june",
+  "july", "august", "september", "october", "november", "december"
+];
+
+function addDays(date: Date, days: number): Date {
+  const next = new Date(date.getTime());
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function addMonths(date: Date, months: number): Date {
+  const next = new Date(date.getTime());
+  next.setMonth(next.getMonth() + months);
+  return next;
+}
+
+function formatIsoDate(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function buildIsoDate(year: number, monthIndex: number, day: number): string | undefined {
+  if (!Number.isFinite(year) || !Number.isFinite(day)) return undefined;
+  if (monthIndex < 0 || monthIndex > 11) return undefined;
+  if (day < 1 || day > 31) return undefined;
+  // Validate by reconstructing and comparing — guards against e.g. Feb 30.
+  const candidate = new Date(Date.UTC(year, monthIndex, day));
+  if (
+    candidate.getUTCFullYear() !== year ||
+    candidate.getUTCMonth() !== monthIndex ||
+    candidate.getUTCDate() !== day
+  ) {
+    return undefined;
+  }
+  return formatIsoDate(new Date(year, monthIndex, day));
 }
 
 /**

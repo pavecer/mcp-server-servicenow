@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { computePrefillValues } from "../src/utils/prefillCatalogForm";
 import { buildOrderFormAdaptiveCard } from "../src/utils/adaptiveCards";
 import type { ServiceNowCatalogItemDetail } from "../src/types/servicenow";
@@ -465,3 +465,181 @@ describe("buildOrderFormAdaptiveCard with prefilledValues", () => {
     expect(colorInput.value).toBe("");
   });
 });
+
+describe("extractDate (natural-language date inference)", () => {
+  // The iPhone fixture has need_by typed as a date (type 8). We pin "now" to a
+  // known Date so relative phrasings produce stable assertions.
+  const FIXED_NOW = new Date(2026, 4, 19); // 2026-05-19 (local time)
+
+  function runWith(context: string) {
+    const item = iphoneItem();
+    // We rely on Date.now()/new Date() reflecting the fixed clock via vi.useFakeTimers.
+    return computePrefillValues(item.variables, { userContext: context });
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(FIXED_NOW);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("still recognizes a bare ISO yyyy-mm-dd date", () => {
+    const { values } = runWith("I need it by 2026-07-01 please.");
+    expect(values.need_by).toBe("2026-07-01");
+  });
+
+  it("resolves 'today' against the current system date", () => {
+    const { values } = runWith("Please ship it today if possible.");
+    expect(values.need_by).toBe("2026-05-19");
+  });
+
+  it("resolves 'tomorrow' against the current system date", () => {
+    const { values } = runWith("Could you have it tomorrow?");
+    expect(values.need_by).toBe("2026-05-20");
+  });
+
+  it("resolves 'in N days' relative phrases", () => {
+    const { values } = runWith("I need it in 3 days for the conference.");
+    expect(values.need_by).toBe("2026-05-22");
+  });
+
+  it("resolves 'in N weeks' relative phrases", () => {
+    const { values } = runWith("Delivery in 2 weeks is fine.");
+    expect(values.need_by).toBe("2026-06-02");
+  });
+
+  it("resolves 'next <weekday>' to the next occurrence after today", () => {
+    // 2026-05-19 is a Tuesday; "next Friday" should be 2026-05-22.
+    const { values } = runWith("Aim for next Friday.");
+    expect(values.need_by).toBe("2026-05-22");
+  });
+
+  it("parses 'Month Day Year' with ordinal suffix and comma", () => {
+    const { values } = runWith("Need by May 25th, 2026 latest.");
+    expect(values.need_by).toBe("2026-05-25");
+  });
+
+  it("parses 'Day Month Year' (e.g. 25 May 2026)", () => {
+    const { values } = runWith("Target date 25 May 2026.");
+    expect(values.need_by).toBe("2026-05-25");
+  });
+
+  it("parses US slash dates with 4-digit year (M/D/YYYY)", () => {
+    const { values } = runWith("Deadline 5/25/2026.");
+    expect(values.need_by).toBe("2026-05-25");
+  });
+
+  it("rejects clearly invalid calendar dates (e.g. Feb 30)", () => {
+    const { values } = runWith("Need by February 30, 2026.");
+    expect(values.need_by).toBeUndefined();
+  });
+
+  it("prefers an explicit date over a relative phrase in the same sentence", () => {
+    // Real Loaner Laptop conversation: 'tomorrow' appears as a distractor while
+    // the actual desired date is given as 'May 25th 2026'.
+    const { values } = runWith(
+      "My laptop is in repair starting tomorrow and I need a loaner from May 25th 2026."
+    );
+    expect(values.need_by).toBe("2026-05-25");
+  });
+
+  it("does not pick a date out of unrelated digits", () => {
+    const { values } = runWith("Phone has 256GB storage and costs 999 dollars.");
+    expect(values.need_by).toBeUndefined();
+  });
+
+  it("classifies labels like 'When do you need it' as date-bearing", () => {
+    const item: ServiceNowCatalogItemDetail = {
+      sys_id: "loaner",
+      name: "Loaner Laptop",
+      variables: [
+        {
+          name: "when_do_need_it",
+          label: "When do you need it ?",
+          type: 6 as unknown as string
+        }
+      ]
+    };
+
+    const { values, diagnostics } = computePrefillValues(item.variables, {
+      userContext: "I need a loaner from May 25th 2026."
+    });
+
+    expect(values.when_do_need_it).toBe("2026-05-25");
+    expect(diagnostics[0]?.source).toBe("context_pattern_match");
+  });
+});
+
+describe("Input.Date rendering for numeric type codes", () => {
+  it("renders ServiceNow type 6 (date/time) as Input.Date even when friendly_type lies", () => {
+    // Mirrors what dev310193 returns for Loaner Laptop's `when_do_need_it`:
+    // numeric type 6 (date/time) but friendly_type "single_line_text".
+    const item: ServiceNowCatalogItemDetail = {
+      sys_id: "loaner_sys_id",
+      name: "Loaner Laptop",
+      variables: [
+        {
+          name: "when_do_need_it",
+          label: "When do you need it ?",
+          type: 6 as unknown as string,
+          friendly_type: "single_line_text",
+          display_type: "Single Line Text"
+        }
+      ]
+    };
+
+    const card = buildOrderFormAdaptiveCard(item, { when_do_need_it: "2026-05-25" });
+    const body = card.body as Array<Record<string, unknown>>;
+    const input = body.find(b => b.id === "when_do_need_it") as Record<string, unknown>;
+    expect(input.type).toBe("Input.Date");
+    expect(input.value).toBe("2026-05-25");
+  });
+
+  it("renders ServiceNow type 8 (date) as Input.Date", () => {
+    const item: ServiceNowCatalogItemDetail = {
+      sys_id: "x",
+      name: "X",
+      variables: [
+        {
+          name: "need_by",
+          label: "Need by",
+          type: 8 as unknown as string
+        }
+      ]
+    };
+
+    const card = buildOrderFormAdaptiveCard(item);
+    const body = card.body as Array<Record<string, unknown>>;
+    const input = body.find(b => b.id === "need_by") as Record<string, unknown>;
+    expect(input.type).toBe("Input.Date");
+  });
+
+  it("does NOT promote a non-date text field that happens to share type code 6", () => {
+    // Real Install Software item on dev310193 has a variable named "software"
+    // with type=6 and friendly_type="single_line_text" - despite numeric 6 being
+    // ServiceNow's date/time code. The label is "What software do you need
+    // installed ?" so we must leave it as Input.Text.
+    const item: ServiceNowCatalogItemDetail = {
+      sys_id: "install_software",
+      name: "Install Software",
+      variables: [
+        {
+          name: "software",
+          label: "What software do you need installed ?",
+          type: 6 as unknown as string,
+          friendly_type: "single_line_text",
+          display_type: "Single Line Text"
+        }
+      ]
+    };
+
+    const card = buildOrderFormAdaptiveCard(item);
+    const body = card.body as Array<Record<string, unknown>>;
+    const input = body.find(b => b.id === "software") as Record<string, unknown>;
+    expect(input.type).toBe("Input.Text");
+  });
+});
+
