@@ -76,7 +76,8 @@ function createCatalogExpressApp(): express.Express {
       const serviceNowAccessToken = req.header("x-servicenow-access-token") || undefined;
       const callerEntraObjectId = res.locals.callerEntraObjectId as string | undefined;
       const callerUpn = res.locals.callerUpn as string | undefined;
-      const items = await runWithRequestContext({ serviceNowAccessToken, callerEntraObjectId, callerUpn }, () =>
+      const callerEntraAccessToken = res.locals.callerAccessToken as string | undefined;
+      const items = await runWithRequestContext({ serviceNowAccessToken, callerEntraObjectId, callerUpn, callerEntraAccessToken }, () =>
         catalogClient.searchCatalogItems(query.trim(), {
           limit: typeof limit === "number" ? limit : 10,
           catalogSysId: typeof catalogSysId === "string" ? catalogSysId : undefined,
@@ -131,7 +132,8 @@ function createCatalogExpressApp(): express.Express {
       const serviceNowAccessToken = req.header("x-servicenow-access-token") || undefined;
       const callerEntraObjectId = res.locals.callerEntraObjectId as string | undefined;
       const callerUpn = res.locals.callerUpn as string | undefined;
-      const item = await runWithRequestContext({ serviceNowAccessToken, callerEntraObjectId, callerUpn }, () =>
+      const callerEntraAccessToken = res.locals.callerAccessToken as string | undefined;
+      const item = await runWithRequestContext({ serviceNowAccessToken, callerEntraObjectId, callerUpn, callerEntraAccessToken }, () =>
         catalogClient.getCatalogItem(sysId as string)
       );
 
@@ -192,7 +194,8 @@ function createCatalogExpressApp(): express.Express {
       const serviceNowAccessToken = req.header("x-servicenow-access-token") || undefined;
       const callerEntraObjectId = res.locals.callerEntraObjectId as string | undefined;
       const callerUpn = res.locals.callerUpn as string | undefined;
-      const response = await runWithRequestContext({ serviceNowAccessToken, callerEntraObjectId, callerUpn }, () =>
+      const callerEntraAccessToken = res.locals.callerAccessToken as string | undefined;
+      const response = await runWithRequestContext({ serviceNowAccessToken, callerEntraObjectId, callerUpn, callerEntraAccessToken }, () =>
         catalogClient.placeOrder(itemSysId, {
           variables,
           quantity: typeof quantity === "number" ? quantity : 1,

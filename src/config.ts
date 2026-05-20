@@ -79,7 +79,18 @@ export const config = {
     // Comma-separated list. Use when your app has a custom App ID URI or non-standard audience.
     allowedAudiences: process.env.ENTRA_ALLOWED_AUDIENCES
       ? process.env.ENTRA_ALLOWED_AUDIENCES.split(",").map(a => a.trim()).filter(Boolean)
-      : []
+      : [],
+    // On-Behalf-Of (OBO) token exchange (Pattern A in docs/AUTH_ENTRA_OBO_OKTA.md).
+    // When true, the inbound user Entra Bearer token is exchanged via MSAL
+    // `acquireTokenOnBehalfOf` for a downstream token whose audience ServiceNow
+    // accepts (ServiceNow must be configured with Entra ID as an OIDC provider).
+    // Default false keeps the existing integration-user grant path unchanged.
+    oboEnabled: process.env.ENTRA_OBO_ENABLED === "true",
+    // Downstream scope requested in the OBO exchange. Typical values:
+    //   api://<server-app-id>/ServiceNow.Use
+    //   api://<server-app-id>/.default
+    // Required when oboEnabled is true.
+    oboDownstreamScope: process.env.ENTRA_OBO_DOWNSTREAM_SCOPE
   },
 
   http: {

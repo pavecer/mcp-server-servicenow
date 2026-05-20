@@ -14,6 +14,8 @@ import Logger from "./logger";
  * Writes validated caller identity to res.locals:
  *   res.locals.callerEntraObjectId  (oid claim)
  *   res.locals.callerUpn            (preferred_username or upn)
+ *   res.locals.callerAccessToken    (raw bearer; used by the OBO exchange in
+ *                                    src/services/oboTokenService.ts. Never logged.)
  */
 export function entraAuthMiddleware(req: Request, res: Response, next: NextFunction): void {
   const entra = config.entraAuth;
@@ -74,6 +76,10 @@ export function entraAuthMiddleware(req: Request, res: Response, next: NextFunct
       });
       res.locals.callerEntraObjectId = payload.oid;
       res.locals.callerUpn = payload.preferred_username || payload.upn;
+      // Surface the raw validated bearer so downstream code can perform an
+      // OBO exchange (Pattern A in docs/AUTH_ENTRA_OBO_OKTA.md). The token
+      // never leaves the request scope and is never logged.
+      res.locals.callerAccessToken = token;
       next();
     })
     .catch(err => {

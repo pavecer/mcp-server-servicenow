@@ -9,6 +9,7 @@ import {
   ServiceNowPlaceOrderResponse
 } from "../types/servicenow";
 import { TokenManager } from "./tokenManager";
+import { getDownstreamTokenForCaller, isOboEnabled } from "./oboTokenService";
 import { getRequestContext } from "../requestContext";
 import Logger from "../utils/logger";
 
@@ -99,21 +100,58 @@ export class ServiceNowClient {
       httpsAgent
     });
 
-    // Inject the per-request bearer token at call time. The token is taken
-    // from the active RequestContext (caller-provided x-servicenow-access-token)
-    // when present; otherwise the integration credentials are used. Throws when
-    // SERVICENOW_REQUIRE_CALLER_ACCESS_TOKEN=true and no caller token exists.
+    // Inject the per-request bearer token at call time. Resolution order:
+    //   1. x-servicenow-access-token header (explicit caller-provided SN token)
+    //   2. OBO exchange of the inbound Entra user token (Pattern A — when
+    //      ENTRA_OBO_ENABLED=true, ENTRA_OBO_DOWNSTREAM_SCOPE is set, and the
+    //      middleware captured the caller's bearer)
+    //   3. Integration-user grant from TokenManager (existing default)
+    // Throws when SERVICENOW_REQUIRE_CALLER_ACCESS_TOKEN=true and neither (1)
+    // nor (2) produced a per-user token, so ServiceNow ACLs are enforced.
     this.httpClient.interceptors.request.use(async (request) => {
-      const callerToken = getRequestContext()?.serviceNowAccessToken;
-      if (config.serviceNow.requireCallerAccessToken && !callerToken) {
-        throw new Error(
-          "ServiceNow caller access token is required. Provide x-servicenow-access-token so ServiceNow ACLs are enforced per user."
-        );
+      const ctx = getRequestContext();
+      const callerSnToken = ctx?.serviceNowAccessToken;
+      const callerEntraToken = ctx?.callerEntraAccessToken;
+      const callerOid = ctx?.callerEntraObjectId;
+
+      let token: string | undefined = callerSnToken;
+      let source: "caller_header" | "obo" | "integration_user" = "caller_header";
+
+      if (!token && isOboEnabled() && callerEntraToken) {
+        try {
+          token = await getDownstreamTokenForCaller({
+            callerAccessToken: callerEntraToken,
+            callerObjectId: callerOid
+          });
+          source = "obo";
+        } catch (err) {
+          // When the caller is required to provide identity, do not fall back
+          // silently — re-throw so the failure is surfaced to the client.
+          if (config.serviceNow.requireCallerAccessToken) {
+            throw err;
+          }
+          Logger.warn("ServiceNow OBO exchange failed; falling back to integration user", {
+            operation: "obo.fallback_to_integration",
+            callerOid: callerOid ?? null
+          }, err);
+        }
       }
 
-      const token = callerToken || await this.tokenManager.getAccessToken();
+      if (!token) {
+        if (config.serviceNow.requireCallerAccessToken) {
+          throw new Error(
+            "ServiceNow caller access token is required. Provide x-servicenow-access-token or enable ENTRA_OBO_ENABLED so ServiceNow ACLs are enforced per user."
+          );
+        }
+        token = await this.tokenManager.getAccessToken();
+        source = "integration_user";
+      }
+
       request.headers = request.headers ?? {};
       (request.headers as Record<string, string>).Authorization = `Bearer ${token}`;
+      // Attach a low-noise breadcrumb so per-request diagnostics know which
+      // identity actually authenticated to ServiceNow.
+      (request as { __snTokenSource?: string }).__snTokenSource = source;
       return request;
     });
   }

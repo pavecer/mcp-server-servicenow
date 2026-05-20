@@ -4,6 +4,7 @@ import { z } from "zod";
 import { config } from "../config";
 import { getRequestContext } from "../requestContext";
 import { TokenManager } from "../services/tokenManager";
+import { getDownstreamTokenForCaller, isOboEnabled } from "../services/oboTokenService";
 import { ServiceNowCatalogItem } from "../types/servicenow";
 
 interface ValidationCheck {
@@ -116,10 +117,13 @@ export function registerValidateServiceNowConfigurationTool(server: McpServer, t
     },
     async ({ query, limit, forceConfiguredCredentials, probeOrderNow, orderProbeItemSysId, orderProbeVariables }) => {
       const checks: ValidationCheck[] = [];
-      const callerToken = getRequestContext()?.serviceNowAccessToken;
+      const ctx = getRequestContext();
+      const callerToken = ctx?.serviceNowAccessToken;
+      const callerEntraToken = ctx?.callerEntraAccessToken;
+      const callerOid = ctx?.callerEntraObjectId;
 
       let accessToken: string;
-      let authMode: "caller_token" | "configured_credentials";
+      let authMode: "caller_token" | "obo" | "configured_credentials";
 
       try {
         if (!forceConfiguredCredentials && callerToken) {
@@ -129,6 +133,17 @@ export function registerValidateServiceNowConfigurationTool(server: McpServer, t
             name: "auth.token_source",
             status: "passed",
             message: "Using x-servicenow-access-token from request header"
+          });
+        } else if (!forceConfiguredCredentials && isOboEnabled() && callerEntraToken) {
+          accessToken = await getDownstreamTokenForCaller({
+            callerAccessToken: callerEntraToken,
+            callerObjectId: callerOid
+          });
+          authMode = "obo";
+          pushCheck(checks, {
+            name: "auth.obo_exchange",
+            status: "passed",
+            message: "Successfully exchanged caller Entra token for downstream ServiceNow token via OBO"
           });
         } else {
           accessToken = await tokenManager.getAccessToken();

@@ -30,7 +30,8 @@ let nextId = 1;
 
 async function postJson(payload) {
   const headers = {
-    "Content-Type": "application/json"
+    "Content-Type": "application/json",
+    "Accept": "application/json, text/event-stream"
   };
 
   if (entraBearerToken) {

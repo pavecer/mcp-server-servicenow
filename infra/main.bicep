@@ -67,6 +67,13 @@ param entraDcrAllowUnauthenticated string = 'false'
 @description('Comma-separated list of additional accepted audience values for Entra tokens.')
 param entraAllowedAudiences string = ''
 
+@description('Enable On-Behalf-Of (OBO) token exchange so the inbound user Entra token is swapped for a downstream token whose audience ServiceNow trusts (Pattern A). Default false preserves the existing integration-user grant path.')
+@allowed([ 'true', 'false' ])
+param entraOboEnabled string = 'false'
+
+@description('Downstream scope requested in the OBO exchange (e.g. api://<server-app-id>/ServiceNow.Use). Required when entraOboEnabled is true.')
+param entraOboDownstreamScope string = ''
+
 @description('Comma-separated list of browser origins allowed for CORS-enabled endpoints.')
 param corsAllowedOrigins string = ''
 
@@ -311,6 +318,8 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
           value: empty(entraDcrRegistrationToken) ? '' : '@Microsoft.KeyVault(SecretUri=${entraDcrRegistrationTokenKeyVaultSecret!.properties.secretUriWithVersion})'
         }
         { name: 'ENTRA_DCR_ALLOW_UNAUTHENTICATED', value: entraDcrAllowUnauthenticated }
+        { name: 'ENTRA_OBO_ENABLED', value: entraOboEnabled }
+        { name: 'ENTRA_OBO_DOWNSTREAM_SCOPE', value: entraOboDownstreamScope }
         // CORS / logging
         { name: 'CORS_ALLOWED_ORIGINS', value: corsAllowedOrigins }
         { name: 'LOG_LEVEL', value: logLevel }

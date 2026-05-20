@@ -210,12 +210,14 @@ export function createMcpExpressApp(): express.Express {
       const serviceNowAccessToken = req.header("x-servicenow-access-token") || undefined;
       const callerEntraObjectId = (res.locals.callerEntraObjectId as string | undefined);
       const callerUpn = (res.locals.callerUpn as string | undefined);
+      const callerEntraAccessToken = (res.locals.callerAccessToken as string | undefined);
 
       await runWithRequestContext(
         {
           serviceNowAccessToken,
           callerEntraObjectId,
-          callerUpn
+          callerUpn,
+          callerEntraAccessToken
         },
         async () => {
           normalizeAcceptHeader(req);

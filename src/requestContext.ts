@@ -6,6 +6,13 @@ export interface RequestContext {
   callerEntraObjectId?: string;
   callerUpn?: string;
   /**
+   * Raw Entra ID access token presented by the caller on the inbound request.
+   * Populated by entraAuthMiddleware after successful validation. Consumed by
+   * the OBO exchange (src/services/oboTokenService.ts) to mint a downstream
+   * token whose audience ServiceNow accepts. Never logged.
+   */
+  callerEntraAccessToken?: string;
+  /**
    * Optional logging sink that wraps the active execution context (e.g. Azure
    * Functions InvocationContext.log/info/warn/error). When set, Logger writes
    * structured log entries through this sink instead of console.* so they are
