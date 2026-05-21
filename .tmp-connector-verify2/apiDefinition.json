@@ -1,0 +1,46 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "SNOW Test",
+    "description": "ServiceNow MCP server for catalog search and ordering",
+    "version": "1.0.0"
+  },
+  "host": "func-xflvdzmohd3e2.azurewebsites.net",
+  "basePath": "/",
+  "schemes": [
+    "https"
+  ],
+  "paths": {
+    "/mcp": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Immediate Response"
+          }
+        },
+        "x-ms-agentic-protocol": "mcp-streamable-1.0",
+        "operationId": "InvokeServer",
+        "summary": "SNOW Test",
+        "description": "ServiceNow MCP server for catalog search and ordering"
+      }
+    }
+  },
+  "securityDefinitions": {
+    "oauth2-auth": {
+      "type": "oauth2",
+      "flow": "accessCode",
+      "authorizationUrl": "https://login.microsoftonline.com/1938ee32-a258-454c-b8db-3a928341bd69/oauth2/v2.0/authorize",
+      "tokenUrl": "https://login.microsoftonline.com/1938ee32-a258-454c-b8db-3a928341bd69/oauth2/v2.0/token",
+      "scopes": {
+        "api://8d73a1f1-5a04-42dd-bbdc-5da72feb6fc5/access_as_user api://8d73a1f1-5a04-42dd-bbdc-5da72feb6fc5/ServiceNow.Use": "api://8d73a1f1-5a04-42dd-bbdc-5da72feb6fc5/access_as_user api://8d73a1f1-5a04-42dd-bbdc-5da72feb6fc5/ServiceNow.Use"
+      }
+    }
+  },
+  "security": [
+    {
+      "oauth2-auth": [
+        "api://8d73a1f1-5a04-42dd-bbdc-5da72feb6fc5/access_as_user api://8d73a1f1-5a04-42dd-bbdc-5da72feb6fc5/ServiceNow.Use"
+      ]
+    }
+  ]
+}

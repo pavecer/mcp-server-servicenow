@@ -1,0 +1,489 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "ServiceNow Table Schema",
+    "description": "Custom connector to retrieve ServiceNow table structure, field details, mandatory fields, and data types. Use this to validate payloads before creating records.",
+    "version": "1.0.0",
+    "contact": {
+      "name": "ESS Support"
+    }
+  },
+  "host": "service-now.com",
+  "x-ms-parameterized-host": {
+    "hostTemplate": "{instance}.service-now.com",
+    "parameters": [
+      {
+        "name": "instance",
+        "in": "path",
+        "required": true,
+        "type": "string",
+        "description": "ServiceNow instance name (e.g., dev310193)"
+      }
+    ]
+  },
+  "basePath": "/api/now",
+  "schemes": [
+    "https"
+  ],
+  "consumes": [
+    "application/json"
+  ],
+  "produces": [
+    "application/json"
+  ],
+  "securityDefinitions": {},
+  "paths": {
+    "/table/sys_dictionary": {
+      "get": {
+        "operationId": "GetTableSchema",
+        "summary": "Get Table Schema",
+        "description": "Retrieves the complete field schema for a specified ServiceNow table including field names, types, mandatory status, and constraints.",
+        "parameters": [
+          {
+            "name": "sysparm_query",
+            "in": "query",
+            "required": true,
+            "type": "string",
+            "description": "Query filter to get fields for a specific table. Format: name={table_name}.",
+            "x-ms-summary": "Table Query",
+            "x-ms-visibility": "important"
+          },
+          {
+            "name": "sysparm_fields",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "default": "element,column_label,internal_type,mandatory,max_length,reference,default_value,read_only,active,name,sys_id,choice,comments",
+            "description": "Comma-separated list of fields to return.",
+            "x-ms-summary": "Fields to Return"
+          },
+          {
+            "$ref": "#/parameters/SysparmDisplayValue"
+          },
+          {
+            "name": "sysparm_exclude_reference_link",
+            "in": "query",
+            "required": false,
+            "type": "boolean",
+            "default": true,
+            "description": "Exclude reference links from response.",
+            "x-ms-summary": "Exclude Reference Links"
+          },
+          {
+            "name": "sysparm_limit",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "default": 1000,
+            "description": "Maximum number of records to return.",
+            "x-ms-summary": "Record Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success - Returns table field definitions.",
+            "schema": {
+              "$ref": "#/definitions/SysDictionaryResponse"
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Invalid or missing authentication."
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions."
+          },
+          "404": {
+            "description": "Not Found - Table does not exist."
+          }
+        },
+        "x-ms-visibility": "important"
+      }
+    },
+    "/table/sys_db_object": {
+      "get": {
+        "operationId": "GetTableInfo",
+        "summary": "Get Table Information",
+        "description": "Retrieves metadata about a ServiceNow table including label, parent table, and access controls.",
+        "parameters": [
+          {
+            "name": "sysparm_query",
+            "in": "query",
+            "required": true,
+            "type": "string",
+            "description": "Query filter to get specific table info. Format: name={table_name}.",
+            "x-ms-summary": "Table Query"
+          },
+          {
+            "name": "sysparm_fields",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "default": "name,label,sys_id,super_class,access,create_access,read_access,update_access,delete_access",
+            "description": "Comma-separated list of fields to return.",
+            "x-ms-summary": "Fields to Return"
+          },
+          {
+            "$ref": "#/parameters/SysparmDisplayValue"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success - Returns table information.",
+            "schema": {
+              "$ref": "#/definitions/SysDbObjectResponse"
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Invalid or missing authentication."
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions."
+          },
+          "404": {
+            "description": "Not Found - Table does not exist."
+          }
+        }
+      }
+    },
+    "/table/sys_choice": {
+      "get": {
+        "operationId": "GetFieldChoices",
+        "summary": "Get Field Choices",
+        "description": "Retrieves available choice values for choice or dropdown fields in a ServiceNow table.",
+        "parameters": [
+          {
+            "name": "sysparm_query",
+            "in": "query",
+            "required": true,
+            "type": "string",
+            "description": "Query filter. Format: name={table_name}^element={field_name}.",
+            "x-ms-summary": "Choice Query"
+          },
+          {
+            "name": "sysparm_fields",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "default": "name,element,value,label,sequence,inactive",
+            "description": "Comma-separated list of fields to return.",
+            "x-ms-summary": "Fields to Return"
+          },
+          {
+            "$ref": "#/parameters/SysparmDisplayValue"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success - Returns choice values.",
+            "schema": {
+              "$ref": "#/definitions/SysChoiceResponse"
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Invalid or missing authentication."
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions."
+          },
+          "404": {
+            "description": "Not Found - Table or field does not exist."
+          }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "SysDictionaryResponse": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/FieldDefinition"
+          },
+          "description": "Array of field definitions"
+        }
+      }
+    },
+    "FieldDefinition": {
+      "type": "object",
+      "properties": {
+        "sys_id": {
+          "type": "string",
+          "description": "Unique system identifier"
+        },
+        "name": {
+          "type": "string",
+          "description": "Table name this field belongs to"
+        },
+        "element": {
+          "type": "string",
+          "description": "Field name (column name)"
+        },
+        "column_label": {
+          "type": "string",
+          "description": "Display label for the field"
+        },
+        "internal_type": {
+          "type": "object",
+          "properties": {
+            "display_value": {
+              "type": "string",
+              "description": "Display name of the data type"
+            },
+            "value": {
+              "type": "string",
+              "description": "Internal data type code"
+            }
+          },
+          "description": "Data type of the field"
+        },
+        "mandatory": {
+          "type": "object",
+          "properties": {
+            "display_value": {
+              "type": "string",
+              "description": "Display value (true/false)"
+            },
+            "value": {
+              "type": "string",
+              "description": "Boolean value as string"
+            }
+          },
+          "description": "Whether the field is mandatory"
+        },
+        "max_length": {
+          "type": "string",
+          "description": "Maximum length for string fields"
+        },
+        "reference": {
+          "type": "object",
+          "properties": {
+            "display_value": {
+              "type": "string",
+              "description": "Referenced table display name"
+            },
+            "value": {
+              "type": "string",
+              "description": "Referenced table sys_id"
+            }
+          },
+          "description": "Reference table for reference fields"
+        },
+        "default_value": {
+          "type": "string",
+          "description": "Default value for the field"
+        },
+        "read_only": {
+          "type": "object",
+          "properties": {
+            "display_value": {
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "description": "Whether the field is read-only"
+        },
+        "active": {
+          "type": "object",
+          "properties": {
+            "display_value": {
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "description": "Whether the field is active"
+        },
+        "choice": {
+          "type": "string",
+          "description": "Choice field indicator (0=none, 1=dropdown, 2=dropdown with none, 3=suggestion)"
+        },
+        "comments": {
+          "type": "string",
+          "description": "Field comments/documentation"
+        }
+      }
+    },
+    "SysDbObjectResponse": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/TableInfo"
+          },
+          "description": "Array of table information"
+        }
+      }
+    },
+    "TableInfo": {
+      "type": "object",
+      "properties": {
+        "sys_id": {
+          "type": "string",
+          "description": "Unique system identifier"
+        },
+        "name": {
+          "type": "string",
+          "description": "Table name"
+        },
+        "label": {
+          "type": "string",
+          "description": "Table display label"
+        },
+        "super_class": {
+          "type": "object",
+          "properties": {
+            "display_value": {
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "description": "Parent table reference"
+        },
+        "access": {
+          "type": "string",
+          "description": "Access control level"
+        },
+        "create_access": {
+          "type": "object",
+          "properties": {
+            "display_value": {
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "description": "Create access allowed"
+        },
+        "read_access": {
+          "type": "object",
+          "properties": {
+            "display_value": {
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "description": "Read access allowed"
+        },
+        "update_access": {
+          "type": "object",
+          "properties": {
+            "display_value": {
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "description": "Update access allowed"
+        },
+        "delete_access": {
+          "type": "object",
+          "properties": {
+            "display_value": {
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "description": "Delete access allowed"
+        }
+      }
+    },
+    "SysChoiceResponse": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ChoiceValue"
+          },
+          "description": "Array of choice values"
+        }
+      }
+    },
+    "ChoiceValue": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Table name"
+        },
+        "element": {
+          "type": "string",
+          "description": "Field name"
+        },
+        "value": {
+          "type": "string",
+          "description": "Choice value"
+        },
+        "label": {
+          "type": "string",
+          "description": "Choice display label"
+        },
+        "sequence": {
+          "type": "string",
+          "description": "Display sequence order"
+        },
+        "inactive": {
+          "type": "object",
+          "properties": {
+            "display_value": {
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "description": "Whether choice is inactive"
+        }
+      }
+    }
+  },
+  "parameters": {
+    "SysparmDisplayValue": {
+      "name": "sysparm_display_value",
+      "in": "query",
+      "required": false,
+      "type": "string",
+      "default": "all",
+      "enum": [
+        "true",
+        "false",
+        "all"
+      ],
+      "description": "Return display values along with actual values.",
+      "x-ms-summary": "Display Value Mode"
+    }
+  },
+  "x-ms-connector-metadata": [
+    {
+      "propertyName": "Website",
+      "propertyValue": "https://www.servicenow.com/"
+    },
+    {
+      "propertyName": "Privacy policy",
+      "propertyValue": "https://www.servicenow.com/privacy-statement.html"
+    },
+    {
+      "propertyName": "Categories",
+      "propertyValue": "IT Operations;Business Management"
+    }
+  ],
+  "security": [
+    {
+      "oauth2-auth": []
+    }
+  ]
+}
