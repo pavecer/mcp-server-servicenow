@@ -44,30 +44,24 @@ If you see the catalog text but no Adaptive Card UI in the agent, **check the ag
 
 ---
 
-## Step 2 - Import the Ordering Topic
+## Step 2 - Import the Ordering Topic and Agent Instructions
 
-`copilot-studio/topics/[CTOP] - SnowMCP OrderCat.yaml` implements the full ServiceNow ordering flow with Adaptive Cards.
+The ordering flow uses an **autonomous-orchestrator + rendering topic** pattern, not a self-contained topic. The orchestrator drives the tool calls; the topic is invoked at each card-render boundary to deterministically render the Adaptive Card and capture the user's submit.
 
-**Flow**: User states intent -> Search items (Adaptive Card picker) -> Select item -> Fill order form (Adaptive Card) -> Confirm -> Place order -> Show confirmation Adaptive Card.
+Two files in the repo define the working setup:
 
-### Import via UI (if your Copilot Studio environment supports YAML import)
+| File | Where it goes |
+|------|---------------|
+| [`copilot-studio/topics/[CTOP] - SnowMCP OrderCat.yaml`](copilot-studio/topics/%5BCTOP%5D%20-%20SnowMCP%20OrderCat.yaml) | Paste into Copilot Studio: **Topics > Add a topic > New topic > Open code editor**, replace the boilerplate with this YAML, Save. |
+| [`copilot-studio/agent-instructions/CA-SNOW-Order-Agent.md`](copilot-studio/agent-instructions/CA-SNOW-Order-Agent.md) | Paste the *Instructions* block (inside the triple-backtick fence) into **Overview > Edit > Instructions**, Save, Publish. |
 
-1. Copilot Studio > **Topics > Add a topic > Import**
-2. Upload the YAML file
-3. Review the imported nodes, then **Publish** the agent
+**Flow**: User states intent → search_catalog_items → topic renders selection card → user picks → get_catalog_item_form → topic renders form card → user submits → place_order → topic renders confirmation card. The orchestrator never tries to render or capture a card itself.
 
-### Manual recreation
+### Why this shape (not a self-contained topic)
 
-Use the YAML file as a blueprint. The topic has 6 action steps:
+Earlier attempts at a self-contained topic that *also* called `place_order` inline hit the dynamic-field-IDs limit of `AdaptiveCardPrompt`'s `output.binding` (which requires static keys). The current split fixes that: the topic captures the entire submit payload via `JSON(System.Activity.Value)` into one variable, and the orchestrator picks up two globals (`Global.ServiceNowSelectedItemSysId`, `Global.ServiceNowFormValuesJson`) on the next plan step to drive `place_order`.
 
-| Step | Type | What it does |
-|------|------|--------------|
-| 1 | Question | Ask the user what they want to order |
-| 2 | Tool call | search_catalog_items - send selectionAdaptiveCard to user |
-| 3 | Question | Capture the item sys_id from the card submit |
-| 4 | Tool call | get_catalog_item_form - send formAdaptiveCard to user |
-| 5 | Question | Capture the submitted form JSON string |
-| 6 | Tool call | place_order with sys_id + form values - send confirmationAdaptiveCard |
+See [`copilot-studio/agent-instructions/CA-SNOW-Order-Agent.md`](copilot-studio/agent-instructions/CA-SNOW-Order-Agent.md) for the full variable contract between topic and orchestrator, plus failure modes this design eliminates.
 
 See [docs/MCS_ACTION_CONTRACTS.md](docs/MCS_ACTION_CONTRACTS.md) for the exact request and response schemas for each tool.
 
