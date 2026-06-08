@@ -6,7 +6,7 @@ This document is the validated, end-to-end recipe for getting **silent SSO with 
 
 > **TL;DR**: the Copilot Studio MCP wizard provisions a connector with the `oauth2pkcewithprm` identity provider, which forces a per-user "Open connection manager" prompt on every host channel. To get true SSO/OBO you have to hand-author a custom MCP connector with `identityProvider: aad` and configure a **separate** Entra "client" app distinct from the API resource app. This is needed to avoid the `AADSTS90009: Application is requesting a token for itself` failure that occurs when the client and resource are the same Entra app.
 
-**Status**: validated end-to-end on `func-xflvdzmohd3e2.azurewebsites.net` in tenant `1938ee32-a258-454c-b8db-3a928341bd69` (D365DemoTSCE54115347) on 2026-06-08. The Copilot Studio test pane now shows a single "Allow" approval card on the first tool call, with no separate Entra sign-in popup or "Open connection manager" prompt.
+**Status**: validated end-to-end on a Function-App-hosted MCP server in a Microsoft 365 demo tenant on 2026-06-08. The Copilot Studio test pane now shows a single "Allow" approval card on the first tool call, with no separate Entra sign-in popup or "Open connection manager" prompt.
 
 ---
 
@@ -15,7 +15,7 @@ This document is the validated, end-to-end recipe for getting **silent SSO with 
 ```
 ┌─────────────────────┐                  ┌────────────────────────┐
 │ Copilot Studio Test │                  │  Function App          │
-│ Pane / Teams / M365 │                  │  func-xflvdzmohd3e2    │
+│ Pane / Teams / M365 │                  │  <your-mcp-host>       │
 │                     │                  │                        │
 │  Custom MCP         │   1. POST /mcp   │  POST /api/mcp         │
 │  Connector          │   + Bearer JWT   │  validates JWT         │
@@ -27,11 +27,11 @@ This document is the validated, end-to-end recipe for getting **silent SSO with 
            ▼                             └────────┬───────────────┘
 ┌─────────────────────┐                           │
 │  Client Entra App   │                           │ 2. ServiceNow REST
-│  ext_SnowCat-       │                           ▼   (as the user)
-│  RemoteProxy        │
-│  appId 6eb9f80d-... │ ── has delegated ────► API Entra App
-│  + client secret    │    permission           "MCS MCP Snow"
-│                     │    access_as_user       appId 8d73a1f1-...
+│  <CLIENT_APP_NAME>  │                           ▼   (as the user)
+│                     │
+│  appId <CLIENT_APP> │ ── has delegated ────► API Entra App
+│  + client secret    │    permission           <API_APP_NAME>
+│                     │    access_as_user       appId <API_APP_ID>
 │  + redirectUri      │                         + exposed scope
 │    matches PP       │                           access_as_user
 │    connector URL    │                         + pre-authorizes
@@ -41,7 +41,7 @@ This document is the validated, end-to-end recipe for getting **silent SSO with 
 Two Entra apps are required because Entra ID rejects an OAuth code flow where the **client** and the **resource (audience)** are the same app. That rejection surfaces as:
 
 ```
-AADSTS90009: Application '8d73a1f1-...' is requesting a token for itself.
+AADSTS90009: Application '<API_APP_ID>' is requesting a token for itself.
 This scenario is supported only if resource is specified using the GUID
 based App Identifier.
 ```
@@ -53,7 +53,7 @@ The fix is structural: keep the API resource app as is, add a separate client ap
 ## Prerequisites
 
 - An existing MCP server deployment with `ENTRA_OBO_ENABLED=true` and `ENTRA_OBO_DOWNSTREAM_SCOPE` set (this repo defaults to `api://<API_APP_ID>/ServiceNow.Use`).
-- The API Entra app (this repo: `MCS MCP Snow`, appId `8d73a1f1-5a04-42dd-bbdc-5da72feb6fc5`) with the `access_as_user` delegated scope exposed.
+- The API Entra app for this MCP server, with the `access_as_user` delegated scope exposed.
 - Owner/admin access to the target Power Platform environment.
 - Owner/admin access to the target Entra tenant for App Registration changes.
 - Owner access to the Function App's Key Vault so the new client secret can be stored alongside `entra-client-secret`.
@@ -66,7 +66,7 @@ You need an Entra app registration that is **distinct** from the API resource ap
 
 ### If you already have a candidate app
 
-Look for an app whose `requiredResourceAccess` already targets the API app (`8d73a1f1-...`) with the `access_as_user` scope (id `16ad9a5e-fd63-45c1-b731-f23ba6adb4b9` in this tenant). In the validated deployment we reused `ext_SnowCat-RemoteProxy` (appId `6eb9f80d-697f-4937-93c8-751de310a3c2`) which was already configured with exactly that permission.
+Look for an app whose `requiredResourceAccess` already targets the API app (`<API_APP_ID>`) with the `access_as_user` scope (the scope id is the `id` value under the API app's `api.oauth2PermissionScopes`). In our deployment we discovered an existing tenant app that had been created weeks earlier for an unrelated experiment and was already wired up exactly as the client needed — saved us from creating yet another Entra app. Worth a quick scan of the tenant before adding a new one.
 
 Quick check via Graph:
 
@@ -94,8 +94,8 @@ Then add the required permission:
 
 ```bash
 CLIENT_APP_ID=<new appId>
-API_APP_ID=8d73a1f1-5a04-42dd-bbdc-5da72feb6fc5
-SCOPE_ID=16ad9a5e-fd63-45c1-b731-f23ba6adb4b9  # access_as_user
+API_APP_ID=<your API app id>
+SCOPE_ID=<your access_as_user scope id>
 az ad app permission add --id $CLIENT_APP_ID \
   --api $API_APP_ID --api-permissions "$SCOPE_ID=Scope"
 az ad app permission grant --id $CLIENT_APP_ID --api $API_APP_ID --scope access_as_user
@@ -121,12 +121,10 @@ KEY_ID=$(echo "$RESP" | jq -r .keyId)
 SECRET=$(echo "$RESP" | jq -r .secretText)
 
 az keyvault secret set --vault-name <YOUR_KV_NAME> \
-  --name snowcat-remoteproxy-client-secret \
+  --name <your-connector-client-secret-name> \
   --value "$SECRET" \
   --tags appId="<CLIENT_APP_ID>" keyId="$KEY_ID" purpose="MCP custom connector OBO client"
 ```
-
-The validated deployment stores the secret as `snowcat-remoteproxy-client-secret` in vault `kv-xflvdzmohd3e2`.
 
 ---
 
@@ -173,10 +171,10 @@ Without this step, the very first user to sign in through the connector sees an 
 
 ```bash
 TOKEN=$(az account get-access-token --resource https://graph.microsoft.com --query accessToken -o tsv)
-API_OBJ_ID=<MCS MCP Snow object id>
+API_OBJ_ID=<API app object id>
 CLIENT_APP_ID=<client appId>
-SCOPE_ID=16ad9a5e-fd63-45c1-b731-f23ba6adb4b9  # access_as_user
-# Also include ServiceNow.Use (fac192ba-...) if you use the OBO downstream scope
+SCOPE_ID=<access_as_user scope id>
+# Also include the downstream OBO scope id (e.g. ServiceNow.Use) if you use it
 
 curl -s -H "Authorization: Bearer $TOKEN" \
   "https://graph.microsoft.com/v1.0/applications/$API_OBJ_ID?\$select=api" \
@@ -188,7 +186,7 @@ d = json.load(open('/tmp/api.json'))
 api = d['api']
 pa = api.get('preAuthorizedApplications', [])
 client = "$CLIENT_APP_ID"
-scopes = ["$SCOPE_ID", "fac192ba-1f29-4b07-a13a-32216ed03e22"]  # add/remove as needed
+scopes = ["$SCOPE_ID", "<downstream scope id if used>"]  # add/remove as needed
 existing = next((p for p in pa if p['appId']==client), None)
 if existing:
     existing['delegatedPermissionIds'] = list({*existing.get('delegatedPermissionIds',[]), *scopes})
@@ -216,8 +214,8 @@ The connector must declare a single `POST /mcp` operation with the `x-ms-agentic
 ```jsonc
 {
   "swagger": "2.0",
-  "info": { "title": "SNOW Test", "description": "...", "version": "1.0" },
-  "host": "func-xflvdzmohd3e2.azurewebsites.net",
+  "info": { "title": "<your connector name>", "description": "...", "version": "1.0" },
+  "host": "<your-mcp-host>.azurewebsites.net",
   "basePath": "/",
   "schemes": ["https"],
   "consumes": ["application/json"],
@@ -226,8 +224,8 @@ The connector must declare a single `POST /mcp` operation with the `x-ms-agentic
     "/mcp": {
       "post": {
         "operationId": "InvokeServer",
-        "summary": "SNOW Test",
-        "description": "ServiceNow MCP server for catalog search and ordering",
+        "summary": "<your connector name>",
+        "description": "<your description>",
         "x-ms-agentic-protocol": "mcp-streamable-1.0",
         "parameters": [
           { "in": "header", "name": "Mcp-Session-Id", "required": false, "type": "string",
@@ -350,16 +348,18 @@ Cause: the swagger validation may have rejected the PATCH silently. Re-fetch the
 
 ---
 
-## Reference: validated deployment values
+## Reference: deployment value template
 
-| Field | Value |
-|---|---|
-| Tenant | `1938ee32-a258-454c-b8db-3a928341bd69` (D365DemoTSCE54115347) |
-| Env | `67203dc9-8a11-e6ef-9970-81e05021161c` (PVE Preview Sand US) |
-| Function App | `func-xflvdzmohd3e2.azurewebsites.net` |
-| API Entra app | `MCS MCP Snow` / `8d73a1f1-5a04-42dd-bbdc-5da72feb6fc5` |
-| Client Entra app | `ext_SnowCat-RemoteProxy` / `6eb9f80d-697f-4937-93c8-751de310a3c2` |
-| KV secret name | `snowcat-remoteproxy-client-secret` (vault `kv-xflvdzmohd3e2`) |
-| Custom connector | `SNOW Test` / `shared_cr7a3-5fsnow-20test-5f635855ea92fead22` |
-| Connector redirect URI | `https://global.consent.azure-apim.net/redirect/cr7a3-5fsnow-20test-5f635855ea92fead22` |
-| Scope | `api://8d73a1f1-5a04-42dd-bbdc-5da72feb6fc5/access_as_user` |
+Fill in your own values for each row. The validated rollout this recipe is based on used identifiers in the same shape as the placeholders below (a sandbox tenant, an `api://` URI bound to the function app's Entra app, etc.) — the exact values are tenant-specific and have been redacted.
+
+| Field | Placeholder | Notes |
+|---|---|---|
+| Tenant | `<TENANT_ID>` | Microsoft 365 tenant GUID |
+| Env | `<POWER_PLATFORM_ENV_ID>` | Power Platform environment GUID |
+| Function App | `<your-function-app>.azurewebsites.net` | Or whatever host serves `/mcp` |
+| API Entra app | `<API_APP_NAME>` / `<API_APP_ID>` | Exposes `access_as_user` (+ any OBO downstream scope) |
+| Client Entra app | `<CLIENT_APP_NAME>` / `<CLIENT_APP_ID>` | Has delegated permission to API app `access_as_user`; holds the connector client secret |
+| KV secret name | `<your-connector-client-secret-name>` (vault `<your-vault-name>`) | Stores the client-app secret used by the custom connector |
+| Custom connector | `<connector display name>` / `shared_<connector-internal-name>` | The internal name is generated by Power Platform from the display name |
+| Connector redirect URI | `https://global.consent.azure-apim.net/redirect/<connector-internal-name>` | Power Platform mints this per connector |
+| Scope | `api://<API_APP_ID>/access_as_user` | Single delegated scope on the API app |

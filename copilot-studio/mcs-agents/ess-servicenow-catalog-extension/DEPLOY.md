@@ -72,17 +72,17 @@ Still in the Copilot Studio portal, for the new ESS ServiceNow Catalog agent:
 
 ```powershell
 # From the repo root
-node C:\Users\pavelvecer\.vscode\agent-plugins\github.com\microsoft\skills-for-copilot-studio\scripts\manage-agent.bundle.js list-agents `
-  --tenant-id 1938ee32-a258-454c-b8db-3a928341bd69 `
-  --environment-url https://orga2778a15.crm.dynamics.com
+node <path>\manage-agent.bundle.js list-agents `
+  --tenant-id <YOUR_TENANT_ID> `
+  --environment-url https://<your-dataverse-org>.crm.dynamics.com
 
 # Find the new agent ID, then clone it:
-node C:\Users\pavelvecer\.vscode\agent-plugins\github.com\microsoft\skills-for-copilot-studio\scripts\manage-agent.bundle.js clone `
+node <path>\manage-agent.bundle.js clone `
   --workspace copilot-studio\mcs-agents\ess-servicenow-catalog-live `
-  --tenant-id 1938ee32-a258-454c-b8db-3a928341bd69 `
-  --environment-id 67203dc9-8a11-e6ef-9970-81e05021161c `
-  --environment-url https://orga2778a15.crm.dynamics.com `
-  --agent-mgmt-url https://powervamg.us-il301.gateway.prod.island.powerapps.com `
+  --tenant-id <YOUR_TENANT_ID> `
+  --environment-id <YOUR_POWER_PLATFORM_ENV_ID> `
+  --environment-url https://<your-dataverse-org>.crm.dynamics.com `
+  --agent-mgmt-url <regional powervamg URL from list-agents output> `
   --agent-id <NEW-AGENT-ID>
 ```
 
@@ -105,12 +105,12 @@ Copy-Item "$src\variables\*" "$dst\variables\" -Force
 # Do NOT overwrite connectionreferences.mcs.yml — it was updated in Step 5
 
 # Push to environment
-node C:\Users\pavelvecer\.vscode\agent-plugins\github.com\microsoft\skills-for-copilot-studio\scripts\manage-agent.bundle.js push `
+node <path>\manage-agent.bundle.js push `
   --workspace copilot-studio\mcs-agents\ess-servicenow-catalog-live `
-  --tenant-id 1938ee32-a258-454c-b8db-3a928341bd69 `
-  --environment-id 67203dc9-8a11-e6ef-9970-81e05021161c `
-  --environment-url https://orga2778a15.crm.dynamics.com `
-  --agent-mgmt-url https://powervamg.us-il301.gateway.prod.island.powerapps.com
+  --tenant-id <YOUR_TENANT_ID> `
+  --environment-id <YOUR_POWER_PLATFORM_ENV_ID> `
+  --environment-url https://<your-dataverse-org>.crm.dynamics.com `
+  --agent-mgmt-url <regional powervamg URL from list-agents output>
 ```
 
 ### Step 7 — Connect to ESS IT or ESS HR Agent

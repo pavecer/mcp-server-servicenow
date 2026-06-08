@@ -78,8 +78,9 @@ topic that calls the action, or as a new operation parameter on the existing
 ## What is and isn't committed
 
 These exports are **not** managed solutions and **do not** contain credentials.
-They contain tenant identifiers (TenantId, EnvironmentId, agent GUIDs, the
-demo `D365DemoTSCE54115347.onmicrosoft.com` account) that are safe to share.
+They contain references to tenant identifiers (TenantId, EnvironmentId, agent
+GUIDs) that were redacted before the repo was made public — see the YAML files
+for the placeholder shapes.
 
 `.mcs/conn.json` is **gitignored** because it's a per-developer connection
 binding regenerated whenever you `pac copilot init` against the agent.
@@ -90,7 +91,7 @@ If you change one of these agents in the portal and want to refresh the
 reference here:
 
 ```powershell
-pac auth create --tenant 1938ee32-a258-454c-b8db-3a928341bd69
+pac auth create --tenant <YOUR_TENANT_ID>
 pac copilot list
 pac copilot pull --copilot-id <agent-id> --output ./copilot-studio/mcs-agents/<agent-folder>
 ```

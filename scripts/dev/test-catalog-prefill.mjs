@@ -3,7 +3,7 @@
  * Generic catalog-item smart-prefill probe.
  *
  * 1. Fetches a real ServiceNow catalog item form (default sys_id is the
- *    "Apple iPhone 13" demo item on https://dev310193.service-now.com).
+ *    "Apple iPhone 13" demo item on https://<your-instance>.service-now.com).
  * 2. Runs the prefill engine (src/utils/prefillCatalogForm.ts) against a
  *    few representative user contexts (free-text only, structured hints
  *    only, both combined) or against a custom scenario you supply.
@@ -82,7 +82,7 @@ for (const arg of argv) {
   }
 }
 
-// Default = the Apple iPhone sys_id you shared from dev310193.
+// Default = the Apple iPhone sys_id you shared from the demo ServiceNow instance.
 const DEFAULT_IPHONE_SYS_ID = "ec80c13297968d1021983d1e6253af32";
 const itemSysId = positional[0] || DEFAULT_IPHONE_SYS_ID;
 const scenarioName = (flags.scenario || "all").toLowerCase();

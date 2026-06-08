@@ -193,13 +193,13 @@ export function normalizeVariableType(variable: ServiceNowVariable): string {
 }
 
 /**
- * The dev310193 demo instance (and likely many real instances) often reports
+ * The demo ServiceNow instance (and likely many real instances) often reports
  * date and date/time variables with the misleading combination
  * `type: 6` + `friendly_type: "single_line_text"`. This helper recognizes
  * when a variable is *probably* a date field even though `normalizeVariableType`
  * would otherwise classify it as plain text. We only override when both the
  * numeric type AND the label look date-shaped, to avoid mistaking labels like
- * "What software do you need installed ?" (also `type: 6` on dev310193) for
+ * "What software do you need installed ?" (also `type: 6` on the demo ServiceNow instance) for
  * dates.
  */
 function isLikelyDateField(variable: ServiceNowVariable): "date" | "datetime" | undefined {

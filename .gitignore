@@ -32,6 +32,7 @@ find_urls.ps1
 # Power Platform connector scaffolds (paconn init/download into temp folders).
 # Only finalized connector definitions should be committed under an explicit path.
 .tmp-connector-*/
+.tmp-connector/
 
 # Resolved Agent 365 BYO MCP registration payload (contains tenant-specific
 # server URL and Entra client ID). Only the *.template.json is checked in.

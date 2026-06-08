@@ -5,7 +5,7 @@
     "description": "Deterministic REST endpoints for Copilot Studio topic-driven ordering flows. Use these operations in topics when you need deterministic adaptive card rendering (search → form → order). The MCP endpoint (/mcp) remains for AI-orchestrated generative flows.",
     "version": "1.0.0"
   },
-  "host": "func-xflvdzmohd3e2.azurewebsites.net",
+  "host": "your-mcp-host.azurewebsites.net",
   "basePath": "/",
   "schemes": ["https"],
   "consumes": ["application/json"],

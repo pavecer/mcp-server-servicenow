@@ -227,7 +227,7 @@ describe("computePrefillValues (iPhone scenario)", () => {
 
   // -------------------------------------------------------------------------
   // Regression coverage for the real "Apple iPhone 13" demo item shape
-  // (sys_id ec80c13297968d1021983d1e6253af32 on dev310193). Its color
+  // (sys_id ec80c13297968d1021983d1e6253af32 on the demo ServiceNow instance). Its color
   // choices use marketing names ("Midnight", "Starlight") and the
   // replacement question is a Yes/No choice list keyed by a long label.
   // -------------------------------------------------------------------------
@@ -328,7 +328,7 @@ describe("computePrefillValues (iPhone scenario)", () => {
 
   // -------------------------------------------------------------------------
   // Regression coverage for the real "Sales Laptop" demo item shape
-  // (sys_id e212a942c0a80165008313c59764eea1 on dev310193). This item has
+  // (sys_id e212a942c0a80165008313c59764eea1 on the demo ServiceNow instance). This item has
   // a NESTED "Optional Software" container wrapping per-app boolean
   // toggles (powerpoint / acrobat / photoshop / siebel) plus a free-text
   // "Additional software requirements". Exercises:
@@ -680,7 +680,7 @@ describe("extractDuration (natural-language duration inference)", () => {
 
 describe("Input.Date rendering for numeric type codes", () => {
   it("renders ServiceNow type 6 (date/time) as Input.Date even when friendly_type lies", () => {
-    // Mirrors what dev310193 returns for Loaner Laptop's `when_do_need_it`:
+    // Mirrors what the demo ServiceNow instance returns for Loaner Laptop's `when_do_need_it`:
     // numeric type 6 (date/time) but friendly_type "single_line_text".
     const item: ServiceNowCatalogItemDetail = {
       sys_id: "loaner_sys_id",
@@ -723,7 +723,7 @@ describe("Input.Date rendering for numeric type codes", () => {
   });
 
   it("does NOT promote a non-date text field that happens to share type code 6", () => {
-    // Real Install Software item on dev310193 has a variable named "software"
+    // Real Install Software item on the demo ServiceNow instance has a variable named "software"
     // with type=6 and friendly_type="single_line_text" - despite numeric 6 being
     // ServiceNow's date/time code. The label is "What software do you need
     // installed ?" so we must leave it as Input.Text.

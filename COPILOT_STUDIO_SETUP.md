@@ -93,7 +93,7 @@ This is **expected behavior** for MCP tools added via the Copilot Studio **MCP w
 
 ### If you need silent SSO with on-behalf-of (OBO): use a hand-authored custom MCP connector
 
-The Copilot Studio MCP **wizard** does not yet support OBO. To get silent SSO today you have to hand-author a custom MCP connector with the `aad` identity provider plus OBO enabled, and wire a separate Entra "client" app distinct from the API resource app. This pattern is validated end-to-end on dev310193 + tenant `D365DemoTSCE54115347`. See **[docs/CUSTOM_MCP_CONNECTOR_OBO.md](docs/CUSTOM_MCP_CONNECTOR_OBO.md)** for the full step-by-step recipe — including the AADSTS90009 ("Application is requesting a token for itself") fix when the connector's client id and resource uri point at the same Entra app.
+The Copilot Studio MCP **wizard** does not yet support OBO. To get silent SSO today you have to hand-author a custom MCP connector with the `aad` identity provider plus OBO enabled, and wire a separate Entra "client" app distinct from the API resource app. This pattern is validated end-to-end against a sandbox tenant + a ServiceNow developer instance. See **[docs/CUSTOM_MCP_CONNECTOR_OBO.md](docs/CUSTOM_MCP_CONNECTOR_OBO.md)** for the full step-by-step recipe — including the AADSTS90009 ("Application is requesting a token for itself") fix when the connector's client id and resource uri point at the same Entra app.
 
 ### Why the wizard does not give you OBO
 
@@ -126,7 +126,7 @@ The hand-authored custom connector path checks the first three boxes and is suff
 The connection record is stored once per user per Power Platform environment and is shared across hosts (Teams, M365 Copilot, web test pane). If a user reports the prompt every time:
 
 1. **Settings > Connections** in Power Apps / Power Automate (signed in as the affected user) - look for the `ServiceNow MCP` connection. If status is `Error - Unauthenticated`, the refresh token is invalid; delete the connection and let the user re-create it from the next host prompt.
-2. Check that `ENTRA_CLIENT_SECRET` on the Function App still matches an active secret on the `MCS MCP Snow` Entra app (see [Troubleshooting > Connection popup closes instantly](#connection-popup-closes-instantly-no-entra-login-page-appears) below). A rotated/expired secret silently invalidates every user's refresh token.
+2. Check that `ENTRA_CLIENT_SECRET` on the Function App still matches an active secret on your MCP server's API Entra app (see [Troubleshooting > Connection popup closes instantly](#connection-popup-closes-instantly-no-entra-login-page-appears) below). A rotated/expired secret silently invalidates every user's refresh token.
 3. Confirm the agent's orchestrator model is GPT-5+ or Claude Sonnet (see [Supported orchestrator models](#supported-orchestrator-models) above) - the wrong model can hide the actual auth flow behind generic "I cannot help" messages.
 
 ### Connection stability after the first prompt

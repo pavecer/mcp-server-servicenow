@@ -195,7 +195,7 @@ describe("buildOrderFormAdaptiveCard", () => {
 
   it("skips ServiceNow UI macros (friendly_type = 'macro') instead of emitting a stub input", () => {
     // Mirrors Retire Change Template's `button_renderer` variable on
-    // dev310193: friendly_type "macro" / display_type "Custom" / no label.
+    // the demo ServiceNow instance: friendly_type "macro" / display_type "Custom" / no label.
     // Such variables only render in the native ServiceNow form and have no
     // meaningful Adaptive Card analog.
     const item: ServiceNowCatalogItemDetail = {
@@ -228,7 +228,7 @@ describe("buildOrderFormAdaptiveCard", () => {
   });
 
   it("renders ServiceNow email fields (type 26) as Input.Text with style 'Email'", () => {
-    // Mirrors the Email Alias catalog item on dev310193: numeric type 26
+    // Mirrors the Email Alias catalog item on the demo ServiceNow instance: numeric type 26
     // with friendly_type "email". Adaptive Cards 1.5 surfaces this as
     // style="Email" so mobile clients can render the email keyboard.
     const item: ServiceNowCatalogItemDetail = {
@@ -255,7 +255,7 @@ describe("buildOrderFormAdaptiveCard", () => {
   });
 
   it("renders a reference variable as Input.ChoiceSet when referenceChoices are provided", () => {
-    // Mirrors the Packaging & Shipping catalog item on dev310193:
+    // Mirrors the Packaging & Shipping catalog item on the demo ServiceNow instance:
     // `internal_destination` is a reference to cmn_location. With the
     // orchestration layer pre-resolving candidate records, the card
     // becomes a picker rather than a free-text input.

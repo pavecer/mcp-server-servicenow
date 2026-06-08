@@ -1,11 +1,11 @@
 # BYO MCP – Power Platform Connector Automation & OBO Gaps
 
 **Status:** Verified hands-on  
-**Environment tested:** PVE Preview Sand US (`67203dc9-8a11-e6ef-9970-81e05021161c`), tenant `1938ee32-...`  
-**Connector tested:** SNOW Test (`cr7a3_5Fsnow-20test`, connector-id `7836b955-...`)  
+**Environment tested:** Sandbox Power Platform environment (env id redacted)  
+**Connector tested:** A custom MCP connector with `identityProvider: aad`  
 **Tool versions:** pac CLI v2.7.4, az CLI 2.x  
 **Date:** 2026-05-27  
-**Author:** CE field (pvecer)
+**Author:** CE field
 
 ---
 
@@ -229,7 +229,7 @@ Power Platform DLP policies can silently block an MCP connector from being used 
 
 ## Field-Verified Automation Script Capability Summary
 
-The following was verified against connector `7836b955-...` in env `67203dc9-...`:
+The following was verified against a custom MCP connector in a sandbox env:
 
 ```powershell
 # WORKS - Full OBO setup via pac CLI (verified)

@@ -172,7 +172,7 @@ Spent a while assuming this was a permissions or grant issue. It is not. The err
 
 ### Day 4: introduced a separate client app, then realized we already had one
 
-Scanned the tenant for Entra apps that already had `access_as_user` delegated permission on the API app. Found `ext_SnowCat-RemoteProxy` — created weeks earlier for an unrelated experiment but configured **exactly** as the connector client needed. Reused it.
+Scanned the tenant for Entra apps that already had `access_as_user` delegated permission on the API app. Found an app created weeks earlier for an unrelated experiment but configured **exactly** as the connector client needed. Reused it.
 
 Lesson: before creating new Entra apps, scan the tenant. Custom connectors leave behind stub client apps that other connectors can reuse.
 
