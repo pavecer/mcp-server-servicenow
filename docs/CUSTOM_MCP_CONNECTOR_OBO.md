@@ -2,6 +2,8 @@
 
 This document is the validated, end-to-end recipe for getting **silent SSO with on-behalf-of (OBO)** working between Copilot Studio and this ServiceNow MCP server.
 
+> **New here?** Read [WHY_CUSTOM_MCP_CONNECTOR.md](./WHY_CUSTOM_MCP_CONNECTOR.md) first for the rationale (why the Copilot Studio MCP wizard cannot do SSO, what each piece of this setup is doing, and what's needed for Teams / M365 Copilot hosts). This file is the executable how-to that the rationale document points at.
+
 > **TL;DR**: the Copilot Studio MCP wizard provisions a connector with the `oauth2pkcewithprm` identity provider, which forces a per-user "Open connection manager" prompt on every host channel. To get true SSO/OBO you have to hand-author a custom MCP connector with `identityProvider: aad` and configure a **separate** Entra "client" app distinct from the API resource app. This is needed to avoid the `AADSTS90009: Application is requesting a token for itself` failure that occurs when the client and resource are the same Entra app.
 
 **Status**: validated end-to-end on `func-xflvdzmohd3e2.azurewebsites.net` in tenant `1938ee32-a258-454c-b8db-3a928341bd69` (D365DemoTSCE54115347) on 2026-06-08. The Copilot Studio test pane now shows a single "Allow" approval card on the first tool call, with no separate Entra sign-in popup or "Open connection manager" prompt.
