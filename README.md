@@ -17,6 +17,7 @@ A stateless [Model Context Protocol](https://modelcontextprotocol.io) server for
 
 - [Copilot Studio Setup](COPILOT_STUDIO_SETUP.md) -- add MCP tool and configure ordering topic
 - [Copilot Studio reference agents](copilot-studio/README.md) -- how this MCP server fits the ESS IT / ESS ServiceNow Catalog agent architecture
+- [Custom MCP Connector with OBO / SSO](docs/CUSTOM_MCP_CONNECTOR_OBO.md) -- hand-author a custom MCP connector so users get true silent SSO instead of the per-user "Open connection manager" prompt
 - [Agent 365 BYO MCP](docs/AGENT_365_BYO_MCP.md) -- register this server in the Microsoft 365 admin center for tenant-wide governance
 - [ServiceNow Setup](docs/SERVICENOW_SETUP.md) -- OAuth app, integration user, and permissions
 - [Action Contracts](docs/MCS_ACTION_CONTRACTS.md) -- tool schemas for Copilot Studio topic authors

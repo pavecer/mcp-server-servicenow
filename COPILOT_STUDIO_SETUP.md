@@ -81,7 +81,7 @@ Operations needed: SearchCatalogItems, GetCatalogItemForm, PlaceCatalogOrder
 
 ---
 
-## Channel notes - Teams and Microsoft 365 Copilot: per-user "Open connection manager" prompt (no SSO)
+## Channel notes - Teams and Microsoft 365 Copilot: per-user "Open connection manager" prompt
 
 When the agent is published to **Microsoft Teams** OR consumed via **Microsoft 365 Copilot** (web / Office app), the first time each user invokes a ServiceNow MCP tool they get an Adaptive Card that says:
 
@@ -89,25 +89,28 @@ When the agent is published to **Microsoft Teams** OR consumed via **Microsoft 3
 > [Open connection manager] to verify your credentials.
 > Once the connection is ready, retry your request.
 
-This is **expected behavior** for MCP tools in Copilot Studio agents on every Power-Platform-connected channel as of May 2026 (verified on Teams desktop, Teams web, and `m365.cloud.microsoft` Copilot). It is **not** a bug in this MCP server, and switching the host channel will not eliminate the prompt.
+This is **expected behavior** for MCP tools added via the Copilot Studio **MCP wizard** (auto-provisioned `oauth2pkcewithprm` connector). On every Power-Platform-connected channel, the host honors the connector's `isSsoConnection: false` flag and falls back to the per-user connection manager prompt.
 
-### Why SSO does not kick in automatically (any channel)
+### If you need silent SSO with on-behalf-of (OBO): use a hand-authored custom MCP connector
 
-Copilot Studio MCP connectors are created with the `oauth2pkcewithprm` (OAuth 2.0 PKCE + Protected Resource Metadata) identity provider. Connections of this type are returned by the Power Platform connectivity API with `isSsoConnection: false`. Every host channel that consumes the connection (Teams, M365 Copilot, the Copilot Studio test pane, embedded webchat, etc.) honors that flag and falls back to the per-user connection manager prompt.
+The Copilot Studio MCP **wizard** does not yet support OBO. To get silent SSO today you have to hand-author a custom MCP connector with the `aad` identity provider plus OBO enabled, and wire a separate Entra "client" app distinct from the API resource app. This pattern is validated end-to-end on dev310193 + tenant `D365DemoTSCE54115347`. See **[docs/CUSTOM_MCP_CONNECTOR_OBO.md](docs/CUSTOM_MCP_CONNECTOR_OBO.md)** for the full step-by-step recipe — including the AADSTS90009 ("Application is requesting a token for itself") fix when the connector's client id and resource uri point at the same Entra app.
+
+### Why the wizard does not give you OBO
 
 True silent SSO (the host gets a token for `1P_HOST_RESOURCE` and exchanges it for a token to your `ENTRA_CLIENT_ID` via OBO) requires all of the following, none of which the Copilot Studio MCP wizard wires up today:
 
-- The connector provisioned with an SSO-capable identity provider (not `oauth2pkcewithprm`).
-- The agent's Entra app pre-authorizes the host's first-party client IDs (Teams desktop / Teams web / M365 Copilot).
+- The connector provisioned with an SSO-capable identity provider (`aad`, not `oauth2pkcewithprm`).
+- The agent's Entra **client** app distinct from the **resource** app (same-app trips AADSTS90009).
+- The resource app pre-authorizes the client app for `access_as_user` (skips user consent prompts).
 - For Teams: a Teams app manifest with `webApplicationInfo.id` = your `ENTRA_CLIENT_ID` and `webApplicationInfo.resource` = `api://<ENTRA_CLIENT_ID>`, published as a Teams app package.
 - For M365 Copilot: equivalent declaration in the agent's M365 Copilot manifest.
 
-Until Microsoft ships SSO support for MCP connectors in Copilot Studio (announced as roadmap, no GA date), the connection-manager prompt is unavoidable on every channel.
+The hand-authored custom connector path checks the first three boxes and is sufficient for both the Copilot Studio test pane and Teams (verified). It does not currently solve the M365 Copilot host on its own — that still needs the manifest-side declaration above.
 
 ### What the user actually experiences
 
-- **First use only**: tap "Open connection manager", sign in, consent to `api://<ENTRA_CLIENT_ID>/access_as_user`, return to chat, tap "Retry".
-- **Subsequent sessions**: silent. Power Platform stores the refresh token (~90 days) and renews access tokens transparently. The prompt only reappears if the refresh token expires, the connection is revoked, the Entra app secret is rotated without a connection reset, or the user is on a different host that doesn't share the connection cache (in practice the connection is per-user-per-environment, so all hosts in the same Power Platform environment share it).
+- **Wizard-provisioned MCP connector**: first use → connection manager prompt → sign in → consent → silent thereafter for ~90 days.
+- **Hand-authored custom MCP connector with OBO** (per [docs/CUSTOM_MCP_CONNECTOR_OBO.md](docs/CUSTOM_MCP_CONNECTOR_OBO.md)): first use → small "Allow" approval card on the very first tool invocation → silent thereafter. No "Open connection manager" prompt, no separate Entra sign-in popup.
 
 ### Workarounds (if the per-user prompt is unacceptable)
 
@@ -189,3 +192,21 @@ Do this any time you change ENTRA_* configuration after the connection was first
 - Verify the function app is running (check Application Insights).
 - Ensure the MCP URL has no trailing slash.
 - Delete and recreate the connection.
+
+### Adaptive Card shows but looks static / no select button visible
+
+Symptom: `search_catalog_items` (or any tool returning a selection card) sends back a card that renders the title, description, and item containers, but no clickable "Select" affordance is visible — the user has no way to pick an item and the topic stays in "Working" state.
+
+**Root cause**: the Copilot Studio web test pane (and some other Power Platform renderers) do not honor `Container.selectAction`. Older versions of `buildCatalogItemSelectionAdaptiveCard` relied solely on `selectAction` for the per-item submit — so the card looked interactive in Teams but appeared static in the Copilot Studio test pane.
+
+**Fix**: as of the current build the selection card emits **both** `Container.selectAction` (for clients that support it) **and** explicit top-level `Action.Submit` buttons (one per item, labeled `Select: <itemName>`). Top-level actions are always rendered as visible buttons by every Copilot Studio renderer. If you see only a static card:
+
+1. Verify your Function App is on a build that includes this fix — `grep "Select: " dist/utils/adaptiveCards.js` in the deployed zip.
+2. If you customized the topic to read the submitted data, the new buttons emit the same `{ action: "select_catalog_item", itemSysId, itemName }` shape as before — no topic changes required.
+3. Confirm the agent's orchestrator model is GPT-5 or Claude Sonnet (see [Supported orchestrator models](#supported-orchestrator-models)). GPT-4.1 rewrites cards as plain text and the buttons vanish along with the structure.
+
+### Adaptive Card not interactive on first message after "Allow" prompt
+
+Symptom: user clicks **Allow** on the MCP tool consent card, the tool call succeeds and returns a card, but the buttons on that card don't respond to clicks until the user types something else or clicks elsewhere in the chat.
+
+This is a known limitation of the Copilot Studio test pane (not a bug in this MCP server). After approving the connection, the card payload arrives but the UI does not always rebind click handlers. **Workaround**: send any next message (even a space) to force a re-render, then the buttons work. Does not occur on the published Teams / M365 Copilot channels.

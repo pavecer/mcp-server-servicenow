@@ -524,6 +524,10 @@ export function buildCatalogItemSelectionAdaptiveCard(
           ? [{ type: "FactSet", facts, spacing: "Small" }]
           : [])
       ],
+      // selectAction lets advanced clients (Teams, Outlook) submit by tapping
+      // the whole container. Some Copilot Studio renderers ignore selectAction
+      // on Containers, so we ALSO emit an explicit Action.Submit button per
+      // item below — that guarantees a visible, clickable affordance.
       selectAction: {
         type: "Action.Submit",
         data: {
@@ -537,12 +541,29 @@ export function buildCatalogItemSelectionAdaptiveCard(
     body.push(container);
   }
 
+  // Explicit per-item buttons. Critical for Copilot Studio's web/test pane
+  // renderer, which does not always honor Container.selectAction. Truncate
+  // long names so the button labels stay legible in narrow chat panes.
+  const actions = items.map(item => {
+    const itemName = toAdaptiveText(item.name) || item.name;
+    const truncated = itemName.length > 40 ? `${itemName.slice(0, 37)}...` : itemName;
+    return {
+      type: "Action.Submit",
+      title: `Select: ${truncated}`,
+      data: {
+        action: "select_catalog_item",
+        itemSysId: item.sys_id,
+        itemName
+      }
+    };
+  });
+
   return {
     type: "AdaptiveCard",
     $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
     version: "1.5",
     body,
-    actions: []
+    actions
   };
 }
 

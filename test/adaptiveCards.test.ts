@@ -40,6 +40,42 @@ describe("buildCatalogItemSelectionAdaptiveCard", () => {
     expect(descriptionBlock.text).toContain('"');
     expect(descriptionBlock.text).not.toContain("&quot;");
   });
+
+  it("emits explicit Action.Submit buttons per item so Copilot Studio renderers always show a clickable control", () => {
+    // Some Copilot Studio renderers (notably the web test pane) silently
+    // ignore Container.selectAction — the card looks like static text and
+    // the user has no way to pick an item. Top-level actions[] are always
+    // rendered as buttons, so verify each item gets one.
+    const items: ServiceNowCatalogItem[] = [
+      { sys_id: "abc", name: "Loaner Laptop" },
+      { sys_id: "def", name: "Standard Monitor" }
+    ];
+    const card = buildCatalogItemSelectionAdaptiveCard(items);
+    const actions = card.actions as Array<Record<string, unknown>>;
+    expect(actions).toHaveLength(2);
+    expect(actions[0]).toMatchObject({
+      type: "Action.Submit",
+      title: "Select: Loaner Laptop",
+      data: { action: "select_catalog_item", itemSysId: "abc", itemName: "Loaner Laptop" }
+    });
+    expect(actions[1]).toMatchObject({
+      type: "Action.Submit",
+      title: "Select: Standard Monitor",
+      data: { action: "select_catalog_item", itemSysId: "def" }
+    });
+  });
+
+  it("truncates long item names in button labels so narrow chat panes stay legible", () => {
+    const longName = "Some Extremely Long Catalog Item Name That Wraps Awkwardly In Buttons";
+    const items: ServiceNowCatalogItem[] = [{ sys_id: "x", name: longName }];
+    const card = buildCatalogItemSelectionAdaptiveCard(items);
+    const actions = card.actions as Array<Record<string, unknown>>;
+    const title = actions[0].title as string;
+    expect(title.length).toBeLessThanOrEqual("Select: ".length + 40);
+    expect(title.endsWith("...")).toBe(true);
+    // Full name is still preserved in the submit data for the agent.
+    expect((actions[0].data as Record<string, unknown>).itemName).toBe(longName);
+  });
 });
 
 describe("buildOrderFormAdaptiveCard", () => {
