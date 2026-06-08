@@ -573,6 +573,111 @@ describe("extractDate (natural-language date inference)", () => {
   });
 });
 
+describe("extractDuration (natural-language duration inference)", () => {
+  function loanerLaptopItem(): ServiceNowCatalogItemDetail {
+    return {
+      sys_id: "loaner_sys_id",
+      name: "Loaner Laptop",
+      variables: [
+        {
+          name: "when_do_need_it",
+          label: "When do you need it ?",
+          type: 6 as unknown as string,
+          friendly_type: "single_line_text",
+          display_type: "Single Line Text"
+        },
+        {
+          name: "how_long_do_need_it",
+          label: "How long do you need it for ?",
+          type: "14",
+          choices: "1 Day\n3 Days\n1 Week\n2 Weeks\n1 Month"
+        }
+      ]
+    };
+  }
+
+  it("matches 'one week' against a '1 Week' choice option (real Copilot Studio prompt)", () => {
+    const item = loanerLaptopItem();
+    const { values } = computePrefillValues(item.variables, {
+      userContext:
+        "I need a loaner laptop starting May 25, 2026 for one week while mine is being repaired."
+    });
+    expect(values.when_do_need_it).toBe("2026-05-25");
+    expect(values.how_long_do_need_it).toBe("1 Week");
+  });
+
+  it("matches '2 weeks' verbatim", () => {
+    const item = loanerLaptopItem();
+    const { values } = computePrefillValues(item.variables, {
+      userContext: "Need a loaner for 2 weeks please."
+    });
+    expect(values.how_long_do_need_it).toBe("2 Weeks");
+  });
+
+  it("matches 'a couple of days' against '3 Days' is NOT inferred (no exact equivalent in choices)", () => {
+    // "a couple of days" → "2 days". The catalog has no "2 Days" entry, so
+    // we must NOT silently map it to "3 Days" — the user must pick themselves.
+    const item = loanerLaptopItem();
+    const { values } = computePrefillValues(item.variables, {
+      userContext: "Just for a couple of days."
+    });
+    expect(values.how_long_do_need_it).toBeUndefined();
+  });
+
+  it("matches '7 days' against '1 Week' via the day→week equivalent", () => {
+    const item = loanerLaptopItem();
+    const { values } = computePrefillValues(item.variables, {
+      userContext: "I'll need it for 7 days."
+    });
+    expect(values.how_long_do_need_it).toBe("1 Week");
+  });
+
+  it("matches '1 month' against '1 Month'", () => {
+    const item = loanerLaptopItem();
+    const { values } = computePrefillValues(item.variables, {
+      userContext: "Loaner needed for 1 month while travelling."
+    });
+    expect(values.how_long_do_need_it).toBe("1 Month");
+  });
+
+  it("does NOT misroute the date extractor onto the 'How long' label", () => {
+    // The label "How long do you need it for ?" contains 'need' which
+    // would otherwise tip it into the date classifier. Verify the
+    // duration kind wins and the date field still gets the explicit date.
+    const item = loanerLaptopItem();
+    const { values, diagnostics } = computePrefillValues(item.variables, {
+      userContext:
+        "I need a loaner laptop starting May 25, 2026 for one week while mine is being repaired."
+    });
+    expect(values.when_do_need_it).toBe("2026-05-25");
+    expect(values.how_long_do_need_it).toBe("1 Week");
+    const durDiag = diagnostics.find(d => d.variableName === "how_long_do_need_it");
+    expect(durDiag?.source).toBe("context_choice_match");
+  });
+
+  it("treats a 'Loan duration' free-text field as a duration field and fills the canonical form", () => {
+    const item: ServiceNowCatalogItemDetail = {
+      sys_id: "x",
+      name: "x",
+      variables: [
+        { name: "loan_duration", label: "Loan duration", type: "6" }
+      ]
+    };
+    const { values } = computePrefillValues(item.variables, {
+      userContext: "Need it for two weeks please."
+    });
+    expect(values.loan_duration).toBe("2 weeks");
+  });
+
+  it("ignores unrelated digits when no duration phrase is present", () => {
+    const item = loanerLaptopItem();
+    const { values } = computePrefillValues(item.variables, {
+      userContext: "Order 256GB storage if possible, costs about 999 dollars."
+    });
+    expect(values.how_long_do_need_it).toBeUndefined();
+  });
+});
+
 describe("Input.Date rendering for numeric type codes", () => {
   it("renders ServiceNow type 6 (date/time) as Input.Date even when friendly_type lies", () => {
     // Mirrors what dev310193 returns for Loaner Laptop's `when_do_need_it`:

@@ -247,6 +247,16 @@ function classifyLabel(label: string): Set<string> {
     kinds.add("justification");
   }
   if (has("quantity", "qty", "count")) kinds.add("quantity");
+  // Duration-bearing labels. "How long do you need it for", "Duration",
+  // "Loan period", "Length of loan", etc. Detected BEFORE date because
+  // these labels also contain "need" / "for" which would otherwise route
+  // them to the date extractor.
+  if (
+    (tokens.has("how") && tokens.has("long")) ||
+    has("duration", "period", "length")
+  ) {
+    kinds.add("duration");
+  }
   // Date-bearing labels. "by" is intentionally excluded since "Approved by",
   // "Created by", etc. would otherwise be misclassified as dates.
   if (has("date", "deadline", "needed", "need", "required", "when", "schedule", "due")) {
@@ -326,6 +336,73 @@ function extractQuantity(context: string): number | undefined {
     if (n > 0 && n < 1000) return n;
   }
   return undefined;
+}
+
+const NUMBER_WORDS: Record<string, number> = {
+  a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5,
+  six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+  eleven: 11, twelve: 12
+};
+
+/**
+ * Extract a duration phrase ("one week", "for 2 weeks", "a couple of days",
+ * "1 month") from a free-text context. Returns BOTH a canonical "N unit"
+ * string for plain text fields and a list of equivalent candidate strings
+ * for matching against a choice list, since ServiceNow catalogs may express
+ * the same duration as "1 Week", "7 Days", "5 Business Days", etc.
+ */
+function extractDuration(
+  context: string
+): { canonical: string; candidates: string[] } | undefined {
+  const lower = context.toLowerCase();
+
+  // "for a couple of days/weeks/months"
+  const couple = lower.match(/\b(?:for\s+)?(?:a\s+)?couple\s+(?:of\s+)?(day|days|week|weeks|month|months)\b/);
+  if (couple) {
+    return buildDurationResult(2, couple[1]);
+  }
+
+  // "for one week", "for 2 weeks", "1 week", "a week", "10 business days"
+  const m = lower.match(
+    /\b(?:for\s+)?(a|an|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|\d{1,3})\s+(?:business\s+|working\s+|calendar\s+)?(day|days|week|weeks|month|months)\b/
+  );
+  if (!m) return undefined;
+
+  const raw = m[1];
+  const n = NUMBER_WORDS[raw] ?? Number(raw);
+  if (!Number.isFinite(n) || n <= 0 || n > 365) return undefined;
+
+  return buildDurationResult(n, m[2]);
+}
+
+function buildDurationResult(
+  n: number,
+  rawUnit: string
+): { canonical: string; candidates: string[] } {
+  const singular = rawUnit.endsWith("s") ? rawUnit.slice(0, -1) : rawUnit;
+  const plural = `${singular}s`;
+  const unit = n === 1 ? singular : plural;
+  const canonical = `${n} ${unit}`;
+
+  const candidates = new Set<string>();
+  candidates.add(canonical);
+  candidates.add(`${n} ${plural}`);
+  candidates.add(`${n} ${singular}`);
+
+  // Cross-unit equivalents — only fire when the conversion is exact, so we
+  // never claim "1 month" equals exactly "30 days" if the catalog only
+  // offers "1 Month" we still pick that first via the canonical form.
+  if (singular === "week") {
+    candidates.add(`${n * 7} days`);
+    candidates.add(`${n * 7} day`);
+  }
+  if (singular === "day" && n % 7 === 0) {
+    const weeks = n / 7;
+    candidates.add(`${weeks} weeks`);
+    candidates.add(`${weeks} week`);
+  }
+
+  return { canonical, candidates: [...candidates] };
 }
 
 function extractDate(context: string, now: Date = new Date()): string | undefined {
@@ -713,6 +790,24 @@ export function computePrefillValues(
         }
       }
 
+      // Duration choice dropdowns ("How long do you need it for ?"). The
+      // ServiceNow catalog usually exposes a small enum like "1 Day",
+      // "1 Week", "2 Weeks", "1 Month". Try each equivalent candidate the
+      // duration extractor produced (e.g. for "one week" we'll try
+      // "1 week" and "7 days").
+      if (!bestChoice && kinds.has("duration")) {
+        const duration = extractDuration(context);
+        if (duration) {
+          for (const candidate of duration.candidates) {
+            const hit = matchChoice(candidate, choices);
+            if (hit) {
+              bestChoice = hit;
+              break;
+            }
+          }
+        }
+      }
+
       if (bestChoice) {
         values[variable.name] = bestChoice.value;
         diagnostics.push({
@@ -763,6 +858,7 @@ export function computePrefillValues(
     else if (kinds.has("storage")) extracted = extractStorage(context);
     else if (kinds.has("carrier")) extracted = extractCarrier(context);
     else if (kinds.has("model")) extracted = extractModelVariant(context);
+    else if (kinds.has("duration")) extracted = extractDuration(context)?.canonical;
     else if (kinds.has("date")) extracted = extractDate(context);
     else if (kinds.has("justification") && looksMultiLine(type, variable)) {
       // For free-form justification, surface the conversation context
